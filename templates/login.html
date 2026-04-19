@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CookAI Admin Login</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #eef3ea;
+        --panel: #fffdf7;
+        --text: #1c261d;
+        --muted: #617169;
+        --accent: #244b36;
+        --accent-soft: #d8e7db;
+        --border: #d6dfd1;
+        --danger: #a63f2f;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Instrument Sans", "Segoe UI", sans-serif;
+        background:
+          radial-gradient(circle at top, rgba(36, 75, 54, 0.14), transparent 32rem),
+          linear-gradient(180deg, #f5f7ef 0%, var(--bg) 100%);
+        color: var(--text);
+        display: grid;
+        place-items: center;
+        padding: 24px;
+      }
+      .card {
+        width: min(100%, 420px);
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 24px;
+        padding: 28px;
+        box-shadow: 0 24px 60px rgba(21, 33, 21, 0.08);
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 2rem;
+        line-height: 1;
+      }
+      p {
+        margin: 0 0 20px;
+        color: var(--muted);
+      }
+      label {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 0.95rem;
+      }
+      input {
+        width: 100%;
+        padding: 14px 16px;
+        border-radius: 14px;
+        border: 1px solid var(--border);
+        font: inherit;
+        margin-bottom: 16px;
+      }
+      button {
+        width: 100%;
+        border: 0;
+        border-radius: 14px;
+        background: var(--accent);
+        color: white;
+        font: inherit;
+        padding: 14px 16px;
+        cursor: pointer;
+      }
+      .flash {
+        margin-bottom: 14px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        background: #fde8e4;
+        color: var(--danger);
+      }
+    </style>
+  </head>
+  <body>
+    <form class="card" method="post" action="/login">
+      <h1>CookAI Admin</h1>
+      <p>Sign in to open the dashboard for user monitoring and control.</p>
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="flash">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+      <label for="password">Dashboard password</label>
+      <input id="password" name="password" type="password" placeholder="Enter password" required>
+      <button type="submit">Open Dashboard</button>
+    </form>
+  </body>
+</html>

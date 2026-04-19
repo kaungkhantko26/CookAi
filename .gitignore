@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.log
+.DS_Store
+.vscode/
+.pytest_cache/
+.mypy_cache/
+bot_state.json
+*.sqlite3
