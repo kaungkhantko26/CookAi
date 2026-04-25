@@ -17,6 +17,82 @@
         --red: #ff5f56;
         --yellow: #ffbd2e;
         --blue: #4db8ff;
+        --scan-opacity: 0.55;
+        --wash: rgba(0,255,136,0.05);
+      }
+      body[data-theme="homebrew"] {
+        --bg: #0c0804;
+        --panel: #130c06;
+        --line: #4a2a12;
+        --text: #ffe3b8;
+        --muted: #c9894a;
+        --green: #f39c3d;
+        --green-soft: rgba(243, 156, 61, 0.16);
+        --yellow: #ffd166;
+        --blue: #ffb454;
+        --wash: rgba(243, 156, 61, 0.08);
+      }
+      body[data-theme="space"] {
+        --bg: #020414;
+        --panel: #070a24;
+        --line: #26326e;
+        --text: #e7e9ff;
+        --muted: #8d98d6;
+        --green: #9d7cff;
+        --green-soft: rgba(157, 124, 255, 0.15);
+        --yellow: #ffd6ff;
+        --blue: #6be7ff;
+        --wash: rgba(107, 231, 255, 0.07);
+      }
+      body[data-theme="toystory"] {
+        --bg: #071b44;
+        --panel: #0b2b69;
+        --line: #f4c430;
+        --text: #fff8d8;
+        --muted: #8ed7ff;
+        --green: #f43f3f;
+        --green-soft: rgba(244, 63, 63, 0.16);
+        --yellow: #ffd84d;
+        --blue: #42c7ff;
+        --wash: rgba(255, 216, 77, 0.08);
+      }
+      body[data-theme="matrix"] {
+        --bg: #000;
+        --panel: #020602;
+        --line: #063d16;
+        --text: #d4ffd4;
+        --muted: #4aa35c;
+        --green: #39ff14;
+        --green-soft: rgba(57, 255, 20, 0.13);
+        --yellow: #baff70;
+        --blue: #68ff98;
+        --wash: rgba(57, 255, 20, 0.06);
+      }
+      body[data-theme="cyberpunk"] {
+        --bg: #110016;
+        --panel: #1d0626;
+        --line: #ff2bd6;
+        --text: #fff1ff;
+        --muted: #b98cff;
+        --green: #00f5ff;
+        --green-soft: rgba(0, 245, 255, 0.14);
+        --yellow: #fff200;
+        --blue: #ff2bd6;
+        --wash: rgba(255, 43, 214, 0.08);
+      }
+      body[data-theme="paper"] {
+        color-scheme: light;
+        --bg: #f7f4ec;
+        --panel: #fffaf0;
+        --line: #d8ccb9;
+        --text: #201b14;
+        --muted: #776b5e;
+        --green: #0f6b45;
+        --green-soft: rgba(15, 107, 69, 0.12);
+        --yellow: #9b6b16;
+        --blue: #265f89;
+        --scan-opacity: 0.16;
+        --wash: rgba(15, 107, 69, 0.05);
       }
       * { box-sizing: border-box; }
       html, body { min-height: 100%; }
@@ -36,7 +112,7 @@
           linear-gradient(rgba(255,255,255,0.025) 50%, rgba(0,0,0,0.08) 50%),
           linear-gradient(90deg, rgba(255,0,0,0.015), rgba(0,255,0,0.01), rgba(0,0,255,0.015));
         background-size: 100% 4px, 6px 100%;
-        opacity: 0.55;
+        opacity: var(--scan-opacity);
       }
       .terminal {
         min-height: 100vh;
@@ -44,7 +120,7 @@
         grid-template-rows: auto 1fr auto;
         border: 1px solid var(--line);
         background:
-          linear-gradient(180deg, rgba(0,255,136,0.05), transparent 18rem),
+          linear-gradient(180deg, var(--wash), transparent 18rem),
           var(--panel);
       }
       .topbar {
@@ -76,6 +152,25 @@
         margin-left: auto;
         color: var(--green);
         font-size: 0.82rem;
+      }
+      .theme-picker {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-left: 12px;
+      }
+      .theme-picker label {
+        color: var(--muted);
+        font-size: 0.78rem;
+      }
+      select {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--green-soft);
+        color: var(--text);
+        font: inherit;
+        font-size: 0.82rem;
+        padding: 7px 9px;
       }
       .screen {
         overflow: auto;
@@ -149,6 +244,8 @@
         }
         .prompt-label { grid-column: 1 / -1; }
         .line, .prompt-label, input, button { font-size: 0.88rem; }
+        .theme-picker label { display: none; }
+        select { max-width: 118px; }
       }
     </style>
   </head>
@@ -159,6 +256,18 @@
         <span class="dot yellow"></span>
         <span class="dot green"></span>
         <span class="title">kaungkhantko.studio - AI terminal</span>
+        <div class="theme-picker">
+          <label for="theme">theme</label>
+          <select id="theme" name="theme" aria-label="Terminal theme">
+            <option value="kali">Kali</option>
+            <option value="homebrew">Homebrew</option>
+            <option value="space">Space</option>
+            <option value="toystory">Toy Story</option>
+            <option value="matrix">Matrix</option>
+            <option value="cyberpunk">Cyberpunk</option>
+            <option value="paper">Paper</option>
+          </select>
+        </div>
         <span id="status" class="status">online</span>
       </header>
       <section id="screen" class="screen" aria-live="polite"></section>
@@ -177,9 +286,12 @@
       const screen = document.querySelector("#screen");
       const status = document.querySelector("#status");
       const send = document.querySelector("#send");
+      const theme = document.querySelector("#theme");
       const promptHtml = '<span class="host">root@studio</span>:<span class="path">~/bot</span><span class="prompt">#</span>';
       const history = [];
       let historyIndex = 0;
+      const THEME_KEY = "cookai_terminal_theme";
+      const THEMES = new Set(["kali", "homebrew", "space", "toystory", "matrix", "cyberpunk", "paper"]);
 
       function getClientId() {
         const existing = localStorage.getItem(CLIENT_ID_KEY);
@@ -212,14 +324,30 @@
         status.textContent = isBusy ? "running" : "online";
       }
 
+      function applyTheme(name, announce = false) {
+        const selected = THEMES.has(name) ? name : "kali";
+        document.body.dataset.theme = selected;
+        theme.value = selected;
+        localStorage.setItem(THEME_KEY, selected);
+        if (announce) appendLine("system", `theme set: ${selected}`);
+      }
+
       async function sendCommand(command) {
         if (command === "/clear") {
           screen.innerHTML = "";
           return;
         }
+        if (command.startsWith("/theme")) {
+          const selected = command.split(/\s+/, 2)[1];
+          if (!selected) {
+            appendLine("system", "themes: kali, homebrew, space, toystory, matrix, cyberpunk, paper");
+            return;
+          }
+          applyTheme(selected.toLowerCase(), true);
+          return;
+        }
 
         setBusy(true);
-        appendLine("system", `connecting to ${API_URL} ...`);
         try {
           const response = await fetch(API_URL, {
             method: "POST",
@@ -262,8 +390,14 @@
         }
       });
 
+      theme.addEventListener("change", () => {
+        applyTheme(theme.value, true);
+        input.focus();
+      });
+
+      applyTheme(localStorage.getItem(THEME_KEY) || "kali");
       appendLine("system", "KaungKhantKo AI Terminal");
-      appendLine("system", "type /help to list commands, /clear to clean the screen");
+      appendLine("system", "type /help to list commands, /clear to clean the screen, /theme to list themes");
       appendLine("system", "Telegram and website chat use the same bot backend.");
     </script>
   </body>
