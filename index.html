@@ -230,7 +230,7 @@
           appendLine(payload.ok ? "assistant" : "error", escapeHtml(payload.reply || "Empty response."));
         } catch (error) {
           appendLine("error", `network error: ${escapeHtml(String(error))}`);
-          appendLine("system", "backend note: deploy the updated dashboard.py/nginx config on the VPS so /api/chat is available with CORS.");
+          appendLine("system", "backend unavailable. try again in a moment.");
         } finally {
           setBusy(false);
           input.focus();
