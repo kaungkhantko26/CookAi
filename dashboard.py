@@ -48,6 +48,8 @@ WEB_TERMINAL_HELP = """Available commands
 /reset                reset web chat memory
 /english              use normal English replies
 /burmese [message]    use Burmese replies
+/chinese [message]    use Chinese replies
+/language <name>      reply in any language, for example Japanese, Thai, Spanish
 /presentation <brief> create a slide/deck outline
 /link <url>           analyze a public link
 /rewrite <text>       rewrite text clearly
@@ -60,6 +62,22 @@ WEB_TERMINAL_HELP = """Available commands
 /hashtags <topic>     suggest hashtags
 
 You can also type any normal message."""
+
+LANGUAGE_ALIASES = {
+    "default": "default",
+    "auto": "default",
+    "english": "default",
+    "en": "default",
+    "burmese": "Burmese",
+    "myanmar": "Burmese",
+    "mm": "Burmese",
+    "my": "Burmese",
+    "chinese": "Chinese",
+    "zh": "Chinese",
+    "cn": "Chinese",
+    "mandarin": "Chinese",
+}
+web_language_preferences: dict[int, str] = {}
 
 
 def require_login() -> bool:
@@ -93,19 +111,55 @@ def get_web_user_id(client_key: str = "") -> int:
     return web_user_id
 
 
-def get_web_language() -> str:
-    value = str(session.get("web_language") or "default")
-    return "burmese" if value == "burmese" else "default"
+def normalize_web_language(language: str) -> str:
+    normalized = bot.normalize_plain_text(language).strip()
+    if not normalized:
+        return "default"
+    return LANGUAGE_ALIASES.get(normalized.lower(), normalized[:60])
 
 
-def set_web_language(language: str) -> None:
-    session["web_language"] = "burmese" if language == "burmese" else "default"
+def get_web_language(user_id: int) -> str:
+    value = web_language_preferences.get(user_id) or str(session.get("web_language") or "default")
+    return normalize_web_language(value)
+
+
+def set_web_language(user_id: int, language: str) -> str:
+    normalized = normalize_web_language(language)
+    web_language_preferences[user_id] = normalized
+    session["web_language"] = normalized
+    return normalized
+
+
+def get_language_system_prompt(language: str) -> str:
+    if language == "default":
+        return bot.BOT_SYSTEM_PROMPT
+    if language.lower() == "burmese":
+        return bot.BURMESE_SYSTEM_PROMPT
+    return bot.with_base_rules(
+        (
+            f"Reply in {language}. "
+            "Use natural, fluent wording a native speaker would expect. "
+            "Do not translate word-for-word. "
+            "Keep names, URLs, code, commands, and technical identifiers unchanged unless translation is requested. "
+            "If a technical English term is standard in that language, you may include it naturally."
+        )
+    )
 
 
 def get_web_system_prompt(user_id: int, text: str) -> str:
-    if get_web_language() == "burmese" or bot.contains_myanmar_text(text):
+    language = get_web_language(user_id)
+    if language.lower() == "burmese" or bot.contains_myanmar_text(text):
         return bot.BURMESE_SYSTEM_PROMPT
+    if language != "default":
+        return get_language_system_prompt(language)
     return bot.get_system_prompt_for_message(user_id, text)
+
+
+def get_web_max_tokens(user_id: int, text: str) -> int:
+    language = get_web_language(user_id)
+    if language.lower() == "burmese" or bot.contains_myanmar_text(text):
+        return bot.BURMESE_MAX_TOKENS
+    return bot.get_max_tokens_for_message(text)
 
 
 def run_web_transform(user_id: int, command: str, argument: str) -> str:
@@ -145,7 +199,10 @@ def run_web_command_pack(user_id: int, command: str, argument: str) -> str:
     )
 
 
-def process_web_chat_message(user_id: int, raw_text: str) -> str:
+def process_web_chat_message(user_id: int, raw_text: str, requested_language: str = "") -> str:
+    if requested_language:
+        set_web_language(user_id, requested_language)
+
     text = bot.normalize_plain_text(raw_text).strip()
     if not text:
         return "Type a command or message first."
@@ -163,23 +220,42 @@ def process_web_chat_message(user_id: int, raw_text: str) -> str:
         bot.conversation_history[user_id].clear()
         bot.conversation_summaries.pop(user_id, None)
         bot.conversation_modes[user_id] = "chat"
-        set_web_language("default")
+        set_web_language(user_id, "default")
         return "Web chat memory reset."
 
     if command == "/english":
-        set_web_language("default")
+        set_web_language(user_id, "default")
         return "English mode enabled."
 
-    if command == "/burmese":
-        set_web_language("burmese")
+    if command in {"/burmese", "/chinese"}:
+        language = "Burmese" if command == "/burmese" else "Chinese"
+        set_web_language(user_id, language)
         if not argument:
-            return "Burmese mode enabled. Type your message."
+            return f"{language} mode enabled. Type your message."
         return bot.request_chat_completion(
             user_id,
             argument,
-            system_prompt=bot.BURMESE_SYSTEM_PROMPT,
-            max_tokens=bot.BURMESE_MAX_TOKENS,
+            system_prompt=get_language_system_prompt(language),
+            max_tokens=bot.BURMESE_MAX_TOKENS if language == "Burmese" else bot.DEFAULT_MAX_TOKENS,
         )
+
+    if command == "/language":
+        if not argument:
+            current_language = get_web_language(user_id)
+            return (
+                f"Current language: {current_language}\n"
+                "Use /language <name>, for example:\n"
+                "/language Burmese\n"
+                "/language Chinese\n"
+                "/language Japanese\n"
+                "/language Thai\n"
+                "/language Spanish\n"
+                "Use /language default or /english to return to normal."
+            )
+        language = set_web_language(user_id, argument)
+        if language == "default":
+            return "Default language mode enabled."
+        return f"{language} mode enabled. Future replies will use {language}."
 
     if command == "/presentation":
         bot.conversation_modes[user_id] = "presentation"
@@ -211,7 +287,7 @@ def process_web_chat_message(user_id: int, raw_text: str) -> str:
         user_id,
         text,
         system_prompt=get_web_system_prompt(user_id, text),
-        max_tokens=bot.get_max_tokens_for_message(text),
+        max_tokens=get_web_max_tokens(user_id, text),
     )
 
 
@@ -327,10 +403,11 @@ def web_chat() -> Any:
     payload = request.get_json(silent=True) or {}
     message = str(payload.get("message") or "").strip()
     client_key = str(payload.get("client_id") or "")
+    requested_language = str(payload.get("language") or "")
     user_id = get_web_user_id(client_key)
 
     try:
-        answer = process_web_chat_message(user_id, message)
+        answer = process_web_chat_message(user_id, message, requested_language=requested_language)
     except requests.HTTPError as exc:
         app.logger.exception("HTTP error while processing website chat")
         error_body = exc.response.text[:500] if exc.response is not None else str(exc)

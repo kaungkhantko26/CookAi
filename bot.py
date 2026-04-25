@@ -76,18 +76,19 @@ PRESENTATION_SYSTEM_PROMPT = with_base_rules(
     )
 )
 BURMESE_SYSTEM_PROMPT = with_base_rules(
-    os.getenv(
-        "BURMESE_SYSTEM_PROMPT",
-        (
-            "You are a helpful Telegram assistant who writes natural, smooth Burmese. "
-            "Reply like a real Burmese chatbot having a normal conversation. "
-            "Use complete thoughts and complete ending sentences. "
-            "Do not stop in the middle of a sentence. "
-            "Avoid stiff literal translation. "
-            "Do not mix random English words into Burmese unless the user asked for English or the term is truly standard. "
-            "Prefer natural Burmese wording over transliterated technical fragments when possible. "
-            "If the user writes in Burmese, reply in Burmese unless they ask otherwise."
-        ),
+    os.getenv("BURMESE_SYSTEM_PROMPT", "").strip()
+    or (
+        "You are a helpful Telegram assistant who writes natural, smooth Burmese. "
+        "Reply like a real Burmese chatbot having a normal conversation with a Myanmar user. "
+        "Use fluent, modern Burmese sentence flow with complete thoughts and complete ending sentences. "
+        "Do not stop in the middle of a sentence. "
+        "Avoid stiff literal translation. "
+        "Do not mix random English words into Burmese unless the user asked for English or the term is truly standard. "
+        "Prefer natural Burmese wording over transliterated technical fragments when possible. "
+        "For technical terms, explain in clear Burmese first and include the English term only when it helps understanding. "
+        "Use polite, friendly Burmese particles naturally, but do not overuse them. "
+        "Avoid awkward word-for-word translation, unnatural punctuation, and broken sentence endings. "
+        "If the user writes in Burmese, reply in Burmese unless they ask otherwise."
     )
 )
 LINK_ANALYSIS_SYSTEM_PROMPT = with_base_rules(
@@ -182,6 +183,8 @@ USER_BOT_COMMANDS = [
     {"command": "reset", "description": "Clear chat memory and reset mode"},
     {"command": "english", "description": "Reply in English"},
     {"command": "burmese", "description": "Reply in smooth Burmese"},
+    {"command": "chinese", "description": "Reply in Chinese"},
+    {"command": "language", "description": "Reply in any language"},
     {"command": "persona", "description": "Set a reusable response role"},
     {"command": "tone", "description": "Set your preferred writing style"},
     {"command": "note", "description": "Save a note from text"},
@@ -234,7 +237,8 @@ MAIN_REPLY_KEYBOARD = {
         [{"text": "/caption"}, {"text": "/script"}, {"text": "/carousel"}],
         [{"text": "/quiz"}, {"text": "/flashcards"}, {"text": "/plan"}],
         [{"text": "/todo list"}, {"text": "/reminders"}, {"text": "/ideas"}],
-        [{"text": "/burmese"}, {"text": "/english"}, {"text": "/menu more"}],
+        [{"text": "/burmese"}, {"text": "/chinese"}, {"text": "/english"}],
+        [{"text": "/menu more"}],
     ],
     "resize_keyboard": True,
     "is_persistent": True,
@@ -265,6 +269,21 @@ PERSONA_PROMPTS = {
     "coder": "Act like a senior coding assistant. Be technical, precise, and solution-oriented.",
     "translator": "Act like a careful Burmese-English translator. Preserve meaning and natural phrasing.",
     "storyteller": "Act like a storyteller. Use vivid but clean language with a natural flow.",
+}
+
+LANGUAGE_ALIASES = {
+    "default": "default",
+    "auto": "default",
+    "english": "default",
+    "en": "default",
+    "burmese": "Burmese",
+    "myanmar": "Burmese",
+    "mm": "Burmese",
+    "my": "Burmese",
+    "chinese": "Chinese",
+    "zh": "Chinese",
+    "cn": "Chinese",
+    "mandarin": "Chinese",
 }
 
 
@@ -1023,6 +1042,30 @@ def remember_exchange(user_id: int, user_message: str, assistant_reply: str) -> 
 
 def contains_myanmar_text(text: str) -> bool:
     return bool(MYANMAR_CHAR_PATTERN.search(text))
+
+
+def normalize_response_language(language: str) -> str:
+    normalized = normalize_plain_text(language).strip()
+    if not normalized:
+        return "default"
+    return LANGUAGE_ALIASES.get(normalized.lower(), normalized[:60])
+
+
+def get_language_system_prompt(language: str) -> str:
+    normalized = normalize_response_language(language)
+    if normalized == "default":
+        return BOT_SYSTEM_PROMPT
+    if normalized.lower() == "burmese":
+        return BURMESE_SYSTEM_PROMPT
+    return with_base_rules(
+        (
+            f"Reply in {normalized}. "
+            "Use natural, fluent wording a native speaker would expect. "
+            "Do not translate word-for-word. "
+            "Keep names, URLs, code, commands, and technical identifiers unchanged unless translation is requested. "
+            "If a technical English term is standard in that language, you may include it naturally."
+        )
+    )
 
 
 def has_social_content_keyword(text: str) -> bool:
@@ -1912,15 +1955,19 @@ def get_system_prompt_for_message(user_id: int, text: str) -> str:
         return PRESENTATION_SYSTEM_PROMPT
     if has_social_content_keyword(text):
         return SOCIAL_CONTENT_SYSTEM_PROMPT
-    if response_languages[user_id] == "burmese" or contains_myanmar_text(text):
+    language = normalize_response_language(response_languages[user_id])
+    if language.lower() == "burmese" or contains_myanmar_text(text):
         return BURMESE_SYSTEM_PROMPT
+    if language != "default":
+        return get_language_system_prompt(language)
     return BOT_SYSTEM_PROMPT
 
 
-def get_max_tokens_for_message(text: str) -> int:
+def get_max_tokens_for_message(text: str, language: str = "default") -> int:
+    normalized_language = normalize_response_language(language)
     if has_social_content_keyword(text):
         return SOCIAL_CONTENT_MAX_TOKENS
-    if contains_myanmar_text(text):
+    if normalized_language.lower() == "burmese" or contains_myanmar_text(text):
         return BURMESE_MAX_TOKENS
     return DEFAULT_MAX_TOKENS
 
@@ -2041,6 +2088,8 @@ def handle_text_message(message: dict[str, Any]) -> None:  # NOSONAR
                 "Use /login <hash> only when setting up a new user.\n"
                 "Use /presentation to switch into slide-making mode.\n"
                 "Use /burmese to reply in Burmese.\n"
+                "Use /chinese to reply in Chinese.\n"
+                "Use /language <name> to reply in any language.\n"
                 "Use /persona <mode> for a reusable role.\n"
                 "Use /tone <text> to set your writing style.\n"
                 f"Use {CMD_NOTE} to save a text note.\n"
@@ -2068,6 +2117,8 @@ def handle_text_message(message: dict[str, Any]) -> None:  # NOSONAR
             "/reset\n"
             "/english\n"
             "/burmese [message]\n"
+            "/chinese [message]\n"
+            "/language <name>\n"
             "/persona <mode>\n"
             "/persona off\n"
             "/tone <text>\n"
@@ -2251,13 +2302,14 @@ def handle_text_message(message: dict[str, Any]) -> None:  # NOSONAR
         )
         return
 
-    if command == "/burmese":
-        response_languages[user_id] = "burmese"
+    if command in {"/burmese", "/chinese"}:
+        selected_language = "Burmese" if command == "/burmese" else "Chinese"
+        response_languages[user_id] = selected_language
         save_persistent_state()
         if not argument:
             send_message(
                 chat_id,
-                "Burmese mode enabled. Send your message.",
+                f"{selected_language} mode enabled. Send your message.",
                 reply_to_message_id=message_id,
             )
             return
@@ -2267,17 +2319,57 @@ def handle_text_message(message: dict[str, Any]) -> None:  # NOSONAR
             answer = request_chat_completion(
                 user_id,
                 argument,
-                system_prompt=SOCIAL_CONTENT_SYSTEM_PROMPT if has_social_content_keyword(argument) else BURMESE_SYSTEM_PROMPT,
-                max_tokens=SOCIAL_CONTENT_MAX_TOKENS if has_social_content_keyword(argument) else BURMESE_MAX_TOKENS,
+                system_prompt=(
+                    SOCIAL_CONTENT_SYSTEM_PROMPT
+                    if has_social_content_keyword(argument)
+                    else get_language_system_prompt(selected_language)
+                ),
+                max_tokens=(
+                    SOCIAL_CONTENT_MAX_TOKENS
+                    if has_social_content_keyword(argument)
+                    else get_max_tokens_for_message(argument, selected_language)
+                ),
             )
             send_message(chat_id, answer, reply_to_message_id=message_id)
         except requests.HTTPError as exc:
-            logger.exception("HTTP error while processing Burmese request")
+            logger.exception("HTTP error while processing language request")
             error_body = exc.response.text[:500] if exc.response is not None else str(exc)
             send_message(chat_id, f"API error:\n{error_body}", reply_to_message_id=message_id)
         except Exception as exc:
-            logger.exception("Unexpected bot error during Burmese request")
+            logger.exception("Unexpected bot error during language request")
             send_message(chat_id, f"Error: {exc}", reply_to_message_id=message_id)
+        return
+
+    if command == "/language":
+        if not argument:
+            current_language = normalize_response_language(response_languages[user_id])
+            send_message(
+                chat_id,
+                (
+                    f"Current language: {current_language}\n"
+                    "Use /language <name>, for example:\n"
+                    "/language Burmese\n"
+                    "/language Chinese\n"
+                    "/language Japanese\n"
+                    "/language Thai\n"
+                    "/language Spanish\n"
+                    "Use /language default or /english to return to normal."
+                ),
+                reply_to_message_id=message_id,
+            )
+            return
+
+        selected_language = normalize_response_language(argument)
+        response_languages[user_id] = selected_language
+        save_persistent_state()
+        if selected_language == "default":
+            send_message(chat_id, "Default language mode enabled.", reply_to_message_id=message_id)
+        else:
+            send_message(
+                chat_id,
+                f"{selected_language} mode enabled. Future replies will use {selected_language}.",
+                reply_to_message_id=message_id,
+            )
         return
 
     if command == "/persona":
@@ -2824,7 +2916,7 @@ def handle_text_message(message: dict[str, Any]) -> None:  # NOSONAR
             user_id,
             text,
             system_prompt=get_system_prompt_for_message(user_id, text),
-            max_tokens=get_max_tokens_for_message(text),
+            max_tokens=get_max_tokens_for_message(text, response_languages[user_id]),
         )
         send_message(chat_id, answer, reply_to_message_id=message_id)
     except requests.HTTPError as exc:
