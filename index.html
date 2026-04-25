@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>KaungKhantKo AI Terminal</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #050807;
+        --panel: #07110d;
+        --line: #123326;
+        --text: #d7ffe9;
+        --muted: #71a889;
+        --green: #00ff88;
+        --green-soft: rgba(0, 255, 136, 0.14);
+        --red: #ff5f56;
+        --yellow: #ffbd2e;
+        --blue: #4db8ff;
+      }
+      * { box-sizing: border-box; }
+      html, body { min-height: 100%; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", Consolas, monospace;
+        letter-spacing: 0;
+      }
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background:
+          linear-gradient(rgba(255,255,255,0.025) 50%, rgba(0,0,0,0.08) 50%),
+          linear-gradient(90deg, rgba(255,0,0,0.015), rgba(0,255,0,0.01), rgba(0,0,255,0.015));
+        background-size: 100% 4px, 6px 100%;
+        opacity: 0.55;
+      }
+      .terminal {
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        border: 1px solid var(--line);
+        background:
+          linear-gradient(180deg, rgba(0,255,136,0.05), transparent 18rem),
+          var(--panel);
+      }
+      .topbar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--line);
+        background: #07100c;
+      }
+      .dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        display: inline-block;
+      }
+      .dot.red { background: var(--red); }
+      .dot.yellow { background: var(--yellow); }
+      .dot.green { background: var(--green); }
+      .title {
+        margin-left: 8px;
+        color: var(--muted);
+        font-size: 0.9rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .status {
+        margin-left: auto;
+        color: var(--green);
+        font-size: 0.82rem;
+      }
+      .screen {
+        overflow: auto;
+        padding: 18px 18px 24px;
+        scroll-behavior: smooth;
+      }
+      .line {
+        max-width: 1100px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        line-height: 1.55;
+        font-size: 0.95rem;
+      }
+      .line + .line { margin-top: 12px; }
+      .system { color: var(--muted); }
+      .user { color: var(--text); }
+      .assistant { color: var(--green); }
+      .error { color: #ff8f86; }
+      .prompt { color: var(--green); }
+      .host { color: var(--blue); }
+      .path { color: var(--yellow); }
+      .inputbar {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        padding: 14px 18px 18px;
+        border-top: 1px solid var(--line);
+        background: rgba(0, 0, 0, 0.28);
+      }
+      .prompt-label {
+        flex: 0 0 auto;
+        color: var(--green);
+        font-size: 0.95rem;
+      }
+      input {
+        width: 100%;
+        min-width: 0;
+        border: 1px solid transparent;
+        outline: none;
+        color: var(--text);
+        background: var(--green-soft);
+        border-radius: 6px;
+        padding: 12px;
+        font: inherit;
+      }
+      input:focus {
+        border-color: var(--green);
+        box-shadow: 0 0 0 2px rgba(0, 255, 136, 0.12);
+      }
+      button {
+        border: 1px solid var(--green);
+        color: var(--green);
+        background: transparent;
+        border-radius: 6px;
+        padding: 12px 14px;
+        font: inherit;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.55;
+        cursor: wait;
+      }
+      @media (max-width: 720px) {
+        .topbar, .screen, .inputbar {
+          padding-left: 12px;
+          padding-right: 12px;
+        }
+        .inputbar {
+          display: grid;
+          grid-template-columns: 1fr auto;
+        }
+        .prompt-label { grid-column: 1 / -1; }
+        .line, .prompt-label, input, button { font-size: 0.88rem; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="terminal" aria-label="KaungKhantKo AI terminal">
+      <header class="topbar">
+        <span class="dot red"></span>
+        <span class="dot yellow"></span>
+        <span class="dot green"></span>
+        <span class="title">kaungkhantko.studio - AI terminal</span>
+        <span id="status" class="status">online</span>
+      </header>
+      <section id="screen" class="screen" aria-live="polite"></section>
+      <form id="form" class="inputbar" autocomplete="off">
+        <label class="prompt-label" for="command"><span class="host">root@studio</span>:<span class="path">~/bot</span>#</label>
+        <input id="command" name="command" type="text" spellcheck="false" autofocus placeholder="type /help or ask anything">
+        <button id="send" type="submit">run</button>
+      </form>
+    </main>
+
+    <script>
+      const API_URL = "https://bot.kaungkhantko.top/api/chat";
+      const CLIENT_ID_KEY = "cookai_terminal_client_id";
+      const form = document.querySelector("#form");
+      const input = document.querySelector("#command");
+      const screen = document.querySelector("#screen");
+      const status = document.querySelector("#status");
+      const send = document.querySelector("#send");
+      const promptHtml = '<span class="host">root@studio</span>:<span class="path">~/bot</span><span class="prompt">#</span>';
+      const history = [];
+      let historyIndex = 0;
+
+      function getClientId() {
+        const existing = localStorage.getItem(CLIENT_ID_KEY);
+        if (existing) return existing;
+        const generated = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+        localStorage.setItem(CLIENT_ID_KEY, generated);
+        return generated;
+      }
+
+      function appendLine(className, html) {
+        const line = document.createElement("div");
+        line.className = `line ${className}`;
+        line.innerHTML = html;
+        screen.appendChild(line);
+        screen.scrollTop = screen.scrollHeight;
+      }
+
+      function escapeHtml(value) {
+        return value
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      }
+
+      function setBusy(isBusy) {
+        send.disabled = isBusy;
+        input.disabled = isBusy;
+        status.textContent = isBusy ? "running" : "online";
+      }
+
+      async function sendCommand(command) {
+        if (command === "/clear") {
+          screen.innerHTML = "";
+          return;
+        }
+
+        setBusy(true);
+        appendLine("system", `connecting to ${API_URL} ...`);
+        try {
+          const response = await fetch(API_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: command, client_id: getClientId() }),
+          });
+          const payload = await response.json();
+          appendLine(payload.ok ? "assistant" : "error", escapeHtml(payload.reply || "Empty response."));
+        } catch (error) {
+          appendLine("error", `network error: ${escapeHtml(String(error))}`);
+          appendLine("system", "backend note: deploy the updated dashboard.py/nginx config on the VPS so /api/chat is available with CORS.");
+        } finally {
+          setBusy(false);
+          input.focus();
+        }
+      }
+
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const command = input.value.trim();
+        if (!command) return;
+        appendLine("user", `${promptHtml} ${escapeHtml(command)}`);
+        history.push(command);
+        historyIndex = history.length;
+        input.value = "";
+        sendCommand(command);
+      });
+
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowUp") {
+          event.preventDefault();
+          historyIndex = Math.max(0, historyIndex - 1);
+          input.value = history[historyIndex] || "";
+          return;
+        }
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          historyIndex = Math.min(history.length, historyIndex + 1);
+          input.value = history[historyIndex] || "";
+        }
+      });
+
+      appendLine("system", "KaungKhantKo AI Terminal");
+      appendLine("system", "type /help to list commands, /clear to clean the screen");
+      appendLine("system", "Telegram and website chat use the same bot backend.");
+    </script>
+  </body>
+</html>

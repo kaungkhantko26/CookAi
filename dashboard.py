@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import hmac
 import secrets
 from typing import Any
@@ -20,6 +21,11 @@ app = Flask(__name__)
 app.secret_key = bot.ADMIN_DASHBOARD_SECRET
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+
+PUBLIC_WEB_ORIGINS = {
+    "https://kaungkhantko.studio",
+    "https://www.kaungkhantko.studio",
+}
 
 
 def is_logged_in() -> bool:
@@ -60,7 +66,23 @@ def require_login() -> bool:
     return request.endpoint in PUBLIC_ENDPOINTS or is_logged_in()
 
 
-def get_web_user_id() -> int:
+@app.after_request
+def add_public_api_headers(response: Any) -> Any:
+    origin = request.headers.get("Origin", "")
+    if origin in PUBLIC_WEB_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        response.headers["Vary"] = "Origin"
+    return response
+
+
+def get_web_user_id(client_key: str = "") -> int:
+    normalized_key = bot.normalize_plain_text(client_key).strip()
+    if normalized_key:
+        digest = hashlib.sha256(normalized_key.encode("utf-8")).hexdigest()
+        return -(int(digest[:12], 16) % 2_000_000_000) - 1
+
     existing = session.get("web_user_id")
     if isinstance(existing, int):
         return existing
@@ -297,11 +319,15 @@ def web_health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/api/chat")
+@app.route("/api/chat", methods=["POST", "OPTIONS"])
 def web_chat() -> Any:
+    if request.method == "OPTIONS":
+        return ("", 204)
+
     payload = request.get_json(silent=True) or {}
     message = str(payload.get("message") or "").strip()
-    user_id = get_web_user_id()
+    client_key = str(payload.get("client_id") or "")
+    user_id = get_web_user_id(client_key)
 
     try:
         answer = process_web_chat_message(user_id, message)
