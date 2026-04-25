@@ -14,6 +14,7 @@ CookAI is a Telegram AI assistant with a split admin system:
 - a user-facing chatbot
 - a separate admin Telegram bot
 - a web admin dashboard
+- a public website terminal chat UI for `kaungkhantko.studio`
 
 It uses OpenRouter for AI responses, supports login-based access control, and includes practical tools for writing, analysis, productivity, study, business planning, PDF export, and QR generation.
 
@@ -22,6 +23,7 @@ It uses OpenRouter for AI responses, supports login-based access control, and in
 - login-gated user access with one-time hashes
 - separate admin dashboard bot for user control
 - web dashboard for browser-based monitoring and admin actions
+- Kali-style browser terminal chat at `/bot` and `/terminal`
 - plain-text AI replies without Markdown formatting in bot output
 - short conversation memory with tone and persona preferences
 - file and photo analysis
@@ -60,6 +62,7 @@ It uses OpenRouter for AI responses, supports login-based access control, and in
 - `bot.py` - main user bot
 - `admin_bot.py` - admin Telegram dashboard bot
 - `dashboard.py` - web admin dashboard
+- `templates/terminal.html` - public website terminal chat UI
 - `.env.example` - public-safe environment template for GitHub
 - `.env` - local-only secrets and runtime configuration, do not upload
 - `requirements.txt` - Python dependencies
@@ -169,6 +172,14 @@ pm2 startup
 - `dashboard.py` serves a password-protected admin dashboard
 - default local bind uses `127.0.0.1:${ADMIN_DASHBOARD_PORT}`
 - the dashboard shows user status, recent activity, login-hash creation, approve/block/unblock actions, and direct user replies
+
+## Website Chat
+
+- `dashboard.py` also serves a public terminal-style website chatbot
+- local URL: `http://127.0.0.1:${ADMIN_DASHBOARD_PORT}/bot`
+- API endpoint: `POST /api/chat` with JSON body `{"message":"hello"}`
+- browser commands include `/help`, `/reset`, `/burmese`, `/english`, `/presentation`, `/link`, `/rewrite`, `/summarize`, `/caption`, `/hook`, and `/hashtags`
+- `bot-dashboard.nginx.conf` maps `https://kaungkhantko.studio` to the terminal UI and keeps `bot.kaungkhantko.top` for the admin dashboard
 
 ## Notes
 
