@@ -95,9 +95,14 @@
         --wash: rgba(15, 107, 69, 0.05);
       }
       * { box-sizing: border-box; }
-      html, body { min-height: 100%; }
+      html,
+      body {
+        min-height: 100%;
+      }
       body {
         margin: 0;
+        min-height: 100svh;
+        overflow: hidden;
         background: var(--bg);
         color: var(--text);
         font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", Consolas, monospace;
@@ -116,6 +121,9 @@
       }
       .terminal {
         min-height: 100vh;
+        min-height: 100svh;
+        height: 100vh;
+        height: 100svh;
         display: grid;
         grid-template-rows: auto 1fr auto;
         border: 1px solid var(--line);
@@ -126,8 +134,9 @@
       .topbar {
         display: flex;
         align-items: center;
+        flex-wrap: wrap;
         gap: 10px;
-        padding: 12px 16px;
+        padding: max(12px, env(safe-area-inset-top)) 16px 12px;
         border-bottom: 1px solid var(--line);
         background: #07100c;
       }
@@ -142,6 +151,8 @@
       .dot.green { background: var(--green); }
       .title {
         margin-left: 8px;
+        min-width: 0;
+        flex: 1 1 260px;
         color: var(--muted);
         font-size: 0.9rem;
         white-space: nowrap;
@@ -158,6 +169,7 @@
         align-items: center;
         gap: 8px;
         margin-left: 12px;
+        min-width: 0;
       }
       .theme-picker label {
         color: var(--muted);
@@ -170,12 +182,16 @@
         color: var(--text);
         font: inherit;
         font-size: 0.82rem;
+        min-height: 44px;
+        max-width: 180px;
         padding: 7px 9px;
       }
       .screen {
+        min-height: 0;
         overflow: auto;
         padding: 18px 18px 24px;
         scroll-behavior: smooth;
+        -webkit-overflow-scrolling: touch;
       }
       .line {
         max-width: 1100px;
@@ -196,7 +212,7 @@
         display: flex;
         gap: 10px;
         align-items: center;
-        padding: 14px 18px 18px;
+        padding: 14px 18px max(18px, env(safe-area-inset-bottom));
         border-top: 1px solid var(--line);
         background: rgba(0, 0, 0, 0.28);
       }
@@ -213,6 +229,7 @@
         color: var(--text);
         background: var(--green-soft);
         border-radius: 6px;
+        min-height: 46px;
         padding: 12px;
         font: inherit;
       }
@@ -225,6 +242,7 @@
         color: var(--green);
         background: transparent;
         border-radius: 6px;
+        min-height: 46px;
         padding: 12px 14px;
         font: inherit;
         cursor: pointer;
@@ -233,10 +251,37 @@
         opacity: 0.55;
         cursor: wait;
       }
+      @media (max-width: 860px) {
+        .topbar {
+          align-items: center;
+        }
+        .status {
+          margin-left: 0;
+        }
+        .theme-picker {
+          flex: 1 1 calc(50% - 8px);
+          margin-left: 0;
+        }
+        .theme-picker select {
+          width: 100%;
+          max-width: none;
+        }
+      }
       @media (max-width: 720px) {
         .topbar, .screen, .inputbar {
           padding-left: 12px;
           padding-right: 12px;
+        }
+        .topbar {
+          gap: 8px;
+        }
+        .title {
+          flex-basis: calc(100% - 90px);
+          margin-left: 4px;
+        }
+        .status {
+          flex: 0 0 auto;
+          margin-left: auto;
         }
         .inputbar {
           display: grid;
@@ -245,7 +290,53 @@
         .prompt-label { grid-column: 1 / -1; }
         .line, .prompt-label, input, button { font-size: 0.88rem; }
         .theme-picker label { display: none; }
-        select { max-width: 118px; }
+      }
+      @media (max-width: 480px) {
+        .dot {
+          width: 10px;
+          height: 10px;
+        }
+        .title {
+          flex-basis: calc(100% - 70px);
+          font-size: 0.78rem;
+        }
+        .status {
+          font-size: 0.74rem;
+        }
+        .theme-picker {
+          flex-basis: calc(50% - 4px);
+        }
+        select {
+          font-size: 0.78rem;
+          padding: 7px 8px;
+        }
+        .screen {
+          padding-top: 12px;
+          padding-bottom: 18px;
+        }
+        .line,
+        .prompt-label,
+        input,
+        button {
+          font-size: 0.84rem;
+        }
+        button {
+          padding-left: 11px;
+          padding-right: 11px;
+        }
+      }
+      @media (max-height: 520px) and (orientation: landscape) {
+        .topbar {
+          padding-top: 8px;
+          padding-bottom: 8px;
+        }
+        .inputbar {
+          padding-top: 10px;
+          padding-bottom: max(10px, env(safe-area-inset-bottom));
+        }
+        .line {
+          line-height: 1.45;
+        }
       }
     </style>
   </head>

@@ -41,6 +41,14 @@ BASE_RESPONSE_RULES = (
     "Keep the response minimal, simple, and easy to read."
 )
 
+FOUNDER_CONTEXT = (
+    "Founder context: Kaung Khant Ko is the founder, owner, and developer of "
+    "CookAI and the KaungKhantKo AI Terminal. If a user mentions Kaung, Khant, "
+    "Ko, KaungKhantKo, or Kaung Khant Ko, understand that they are referring "
+    "to the founder unless the surrounding context clearly means someone else. "
+    "Do not invent private details about the founder."
+)
+
 
 def with_base_rules(prompt: str) -> str:
     prompt = prompt.strip()
@@ -1320,6 +1328,9 @@ def build_messages(
 
 
 def build_system_prompt(user_id: int, system_prompt: str) -> str:
+    if FOUNDER_CONTEXT not in system_prompt:
+        system_prompt = f"{system_prompt}\n\n{FOUNDER_CONTEXT}"
+
     persona = persona_preferences.get(user_id, "").strip()
     if persona and persona in PERSONA_PROMPTS:
         system_prompt = f"{system_prompt}\n\n{PERSONA_PROMPTS[persona]}"
