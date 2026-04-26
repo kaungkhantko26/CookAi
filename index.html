@@ -399,6 +399,8 @@
       let historyIndex = 0;
       const THEME_KEY = "cookai_terminal_theme";
       const LANGUAGE_KEY = "cookai_terminal_language";
+      const CHAT_LOG_KEY = "cookai_terminal_chat_log";
+      const CHAT_LOG_LIMIT = 120;
       const THEMES = new Set(["kali", "homebrew", "space", "toystory", "matrix", "cyberpunk", "paper"]);
       const LANGUAGE_OPTIONS = new Set([...language.options].map((option) => option.value.toLowerCase()));
 
@@ -410,12 +412,43 @@
         return generated;
       }
 
-      function appendLine(className, html) {
+      function readChatLog() {
+        try {
+          const saved = JSON.parse(localStorage.getItem(CHAT_LOG_KEY) || "[]");
+          if (!Array.isArray(saved)) return [];
+          return saved.filter((item) => item && typeof item.className === "string" && typeof item.html === "string");
+        } catch {
+          return [];
+        }
+      }
+
+      function writeChatLog(lines) {
+        localStorage.setItem(CHAT_LOG_KEY, JSON.stringify(lines.slice(-CHAT_LOG_LIMIT)));
+      }
+
+      function saveChatLine(className, html) {
+        if (className === "system") return;
+        const lines = readChatLog();
+        lines.push({ className, html, createdAt: Date.now() });
+        writeChatLog(lines);
+      }
+
+      function appendLine(className, html, persist = false) {
         const line = document.createElement("div");
         line.className = `line ${className}`;
         line.innerHTML = html;
         screen.appendChild(line);
         screen.scrollTop = screen.scrollHeight;
+        if (persist) saveChatLine(className, html);
+      }
+
+      function restoreChatLog() {
+        const lines = readChatLog();
+        if (!lines.length) return;
+        for (const item of lines) {
+          appendLine(item.className, item.html);
+        }
+        appendLine("system", `restored ${lines.length} local chat lines`);
       }
 
       function escapeHtml(value) {
@@ -464,6 +497,8 @@
       async function sendCommand(command) {
         if (command === "/clear") {
           screen.innerHTML = "";
+          localStorage.removeItem(CHAT_LOG_KEY);
+          appendLine("system", "local chat history cleared");
           return;
         }
         if (command.startsWith("/theme")) {
@@ -494,9 +529,9 @@
             body: JSON.stringify({ message: command, client_id: getClientId(), language: getCurrentLanguage() }),
           });
           const payload = await response.json();
-          appendLine(payload.ok ? "assistant" : "error", escapeHtml(payload.reply || "Empty response."));
+          appendLine(payload.ok ? "assistant" : "error", escapeHtml(payload.reply || "Empty response."), true);
         } catch (error) {
-          appendLine("error", `network error: ${escapeHtml(String(error))}`);
+          appendLine("error", `network error: ${escapeHtml(String(error))}`, true);
           appendLine("system", "backend unavailable. try again in a moment.");
         } finally {
           setBusy(false);
@@ -508,7 +543,7 @@
         event.preventDefault();
         const command = input.value.trim();
         if (!command) return;
-        appendLine("user", `${promptHtml} ${escapeHtml(command)}`);
+        appendLine("user", `${promptHtml} ${escapeHtml(command)}`, true);
         history.push(command);
         historyIndex = history.length;
         input.value = "";
@@ -543,6 +578,7 @@
       appendLine("system", "KaungKhantKo AI Terminal");
       appendLine("system", "type /help to list commands, /clear to clean the screen, /theme to list themes, /language to choose output language");
       appendLine("system", "Telegram and website chat use the same bot backend.");
+      restoreChatLog();
     </script>
   </body>
 </html>
