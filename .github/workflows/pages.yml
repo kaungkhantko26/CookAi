@@ -30,16 +30,12 @@ jobs:
 
       - name: Create Supabase browser config
         run: |
-          if [ -n "${{ secrets.SUPABASE_URL }}" ] && [ -n "${{ secrets.SUPABASE_ANON_KEY }}" ]; then
-            cat > supabase-config.js <<'EOF'
+          cat > supabase-config.js <<'EOF'
           window.MENTOR_SUPABASE = {
             url: "${{ secrets.SUPABASE_URL }}",
             anonKey: "${{ secrets.SUPABASE_ANON_KEY }}"
           };
           EOF
-          else
-            echo "Using committed supabase-config.js because GitHub secrets are not set."
-          fi
 
       - name: Upload static site
         uses: actions/upload-pages-artifact@v3
