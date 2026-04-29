@@ -3,20 +3,28 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Access - MENTOR</title>
+    <title>Login - MENTOR</title>
     <link rel="stylesheet" href="app.css">
   </head>
   <body data-page="login">
     <main class="login-shell">
-      <form id="hashForm" class="login-card">
+      <form id="loginForm" class="login-card">
         <div class="window-dots"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
         <h1>MENTOR</h1>
-        <p class="muted">Enter the one-time access hash from Kaung. Hashes are created from the admin bot or dashboard and can only be used once.</p>
-        <label for="accessHash">Access hash</label>
-        <input id="accessHash" type="text" autocomplete="one-time-code" placeholder="A1B2C3D4E5" required>
+        <p class="muted">Login or create an account. Your notes, planner, stats, and chat history sync with Supabase.</p>
+        <label for="name">Name</label>
+        <input id="name" type="text" value="Kaung">
+        <label for="email">Email</label>
+        <input id="email" type="email" placeholder="you@example.com" required>
+        <label for="password">Password</label>
+        <input id="password" type="password" minlength="6" placeholder="At least 6 characters" required>
         <div class="actions">
-          <button type="submit">Unlock this device</button>
-          <a class="button secondary" href="chat.html" target="_blank" rel="noopener">Terminal chat</a>
+          <button type="submit" data-mode="login">Login</button>
+          <button type="submit" data-mode="signup" class="secondary">Sign up</button>
+        </div>
+        <div class="actions">
+          <button id="resendConfirm" type="button" class="secondary">Resend confirmation</button>
+          <button id="resetPassword" type="button" class="secondary">Reset password</button>
         </div>
         <p id="loginStatus" class="muted"></p>
       </form>

@@ -12,9 +12,7 @@ const NAV_ITEMS = [
 ];
 
 const API_URL = "https://bot.kaungkhantko.top/api/chat";
-const HASH_API_URL = "https://bot.kaungkhantko.top/api/redeem-hash";
 const CLIENT_ID_KEY = "mentor_client_id";
-const ACCESS_KEY = "mentor_hash_access";
 const page = document.body.dataset.page || "dashboard";
 const cfg = window.MENTOR_SUPABASE || {};
 const supabaseClient = window.supabase && cfg.url && cfg.anonKey
@@ -27,6 +25,8 @@ const supabaseClient = window.supabase && cfg.url && cfg.anonKey
       }
     })
   : null;
+const authRedirectUrl = `${window.location.origin}${window.location.pathname.replace(/[^/]*$/, "")}auth.html`;
+
 let session = null;
 let user = null;
 let profile = null;
@@ -65,19 +65,6 @@ function clientId() {
   return generated;
 }
 
-function hasHashAccess() {
-  try {
-    const access = JSON.parse(localStorage.getItem(ACCESS_KEY) || "null");
-    return Boolean(access && access.ok && access.clientId === clientId());
-  } catch {
-    return false;
-  }
-}
-
-function saveHashAccess() {
-  localStorage.setItem(ACCESS_KEY, JSON.stringify({ ok: true, clientId: clientId(), unlockedAt: Date.now() }));
-}
-
 function toast(message) {
   const node = $("#toast");
   if (!node) return;
@@ -96,7 +83,7 @@ function requireSupabaseMessage() {
   return `
     <article class="card full">
       <h2>Supabase setup required</h2>
-      <p class="muted">Add GitHub Pages secrets <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code>, then run the SQL in <code>supabase.sql</code>. After that, hash unlock, realtime stats, and all data features will work.</p>
+      <p class="muted">Add GitHub Pages secrets <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code>, then run the SQL in <code>supabase.sql</code>. After that, login, signup, realtime stats, and all data features will work.</p>
     </article>`;
 }
 
@@ -108,19 +95,20 @@ async function initAuth() {
   supabaseClient.auth.onAuthStateChange((_event, nextSession) => {
     session = nextSession;
     user = nextSession && nextSession.user;
+    if (!user && page !== "login" && $("#app")) window.location.href = "login.html";
   });
 }
 
-async function ensureDeviceSession() {
-  if (!supabaseClient) return;
-  await initAuth();
-  if (user) return;
-  const result = await supabaseClient.auth.signInAnonymously();
-  if (result.error) {
-    throw new Error(`Supabase anonymous sign-in is not enabled: ${result.error.message}`);
+function authErrorMessage(error) {
+  if (!error) return "Authentication failed. Try again.";
+  const message = error.message || String(error);
+  if (message.toLowerCase().includes("email not confirmed")) {
+    return "Email is not confirmed yet. Check your inbox or resend the confirmation email.";
   }
-  session = result.data.session;
-  user = result.data.user;
+  if (message.toLowerCase().includes("invalid login")) {
+    return "Email or password is incorrect. If you just signed up, confirm your email first.";
+  }
+  return message;
 }
 
 async function ensureProfile() {
@@ -192,7 +180,7 @@ function renderShell(title, subtitle) {
     <main class="main">
       <div class="topline">
         <div class="window-dots"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
-        <span class="muted">root@mentor:~/${page}# ${hasHashAccess() ? "device-unlocked" : "locked"}</span>
+        <span class="muted">root@mentor:~/${page}# ${user ? escapeHtml(user.email) : "guest"}</span>
       </div>
       <section class="page-title">
         <h1>${title}</h1>
@@ -214,11 +202,11 @@ async function boot(title, subtitle, render) {
   renderShell(title, subtitle);
   if (!supabaseClient) return;
   try {
-    if (!hasHashAccess()) {
+    await initAuth();
+    if (!user) {
       window.location.href = "login.html";
       return;
     }
-    await ensureDeviceSession();
     await ensureProfile();
     await fetchAll();
     render();
@@ -231,7 +219,7 @@ async function boot(title, subtitle, render) {
       <article class="card full">
         <h2>Setup issue</h2>
         <p class="muted">${escapeHtml(error.message || String(error))}</p>
-        <p class="muted">Make sure <code>supabase.sql</code> has been run and Anonymous sign-ins are enabled in Supabase Auth.</p>
+        <p class="muted">Make sure <code>supabase.sql</code> has been run and email auth is enabled in Supabase.</p>
       </article>`;
   }
 }
@@ -581,7 +569,6 @@ function settings() {
       toast("Profile saved");
     });
     $("#logout").addEventListener("click", async () => {
-      localStorage.removeItem(ACCESS_KEY);
       await supabaseClient.auth.signOut();
       window.location.href = "login.html";
     });
@@ -589,35 +576,104 @@ function settings() {
 }
 
 async function loginPage() {
-  if (hasHashAccess()) {
-    window.location.href = "dashboard.html";
+  if (!supabaseClient) {
+    $("#loginStatus").textContent = "Supabase config is missing. Add secrets and redeploy.";
     return;
   }
-  const form = $("#hashForm");
-  if (!form) return;
-  form.addEventListener("submit", async (event) => {
+  try {
+    await initAuth();
+    if (user) window.location.href = "dashboard.html";
+  } catch (error) {
+    $("#loginStatus").textContent = authErrorMessage(error);
+  }
+  $("#loginForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const hash = $("#accessHash").value.trim().toUpperCase();
-    if (!hash) return;
-    $("#loginStatus").textContent = "Checking access hash...";
-    try {
-      const response = await fetch(HASH_API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hash, client_id: clientId() })
-      });
-      const payload = await response.json();
-      if (!response.ok || !payload.ok) {
-        $("#loginStatus").textContent = payload.message || "Invalid or already used hash.";
+    const email = $("#email").value.trim();
+    const password = $("#password").value;
+    const name = $("#name").value.trim() || "Kaung";
+    const mode = event.submitter && event.submitter.dataset.mode ? event.submitter.dataset.mode : "login";
+    $("#loginStatus").textContent = "Working...";
+    const result = mode === "signup"
+      ? await supabaseClient.auth.signUp({ email, password, options: { data: { name }, emailRedirectTo: authRedirectUrl } })
+      : await supabaseClient.auth.signInWithPassword({ email, password });
+    if (result.error) {
+      $("#loginStatus").textContent = authErrorMessage(result.error);
+      return;
+    }
+    session = result.data.session;
+    user = result.data.user;
+    if (!session && mode === "signup") {
+      $("#loginStatus").textContent = "Signup created. Check your email if confirmation is enabled.";
+      return;
+    }
+    await ensureProfile();
+    window.location.href = "dashboard.html";
+  });
+  const resend = $("#resendConfirm");
+  if (resend) {
+    resend.addEventListener("click", async () => {
+      const email = $("#email").value.trim();
+      if (!email) {
+        $("#loginStatus").textContent = "Enter your email first.";
         return;
       }
-      saveHashAccess();
-      if (supabaseClient) await ensureDeviceSession();
-      window.location.href = "dashboard.html";
-    } catch (error) {
-      $("#loginStatus").textContent = `Could not verify hash: ${error.message || error}`;
+      const result = await supabaseClient.auth.resend({ type: "signup", email, options: { emailRedirectTo: authRedirectUrl } });
+      $("#loginStatus").textContent = result.error ? authErrorMessage(result.error) : "Confirmation email sent. Check your inbox.";
+    });
+  }
+  const reset = $("#resetPassword");
+  if (reset) {
+    reset.addEventListener("click", async () => {
+      const email = $("#email").value.trim();
+      if (!email) {
+        $("#loginStatus").textContent = "Enter your email first.";
+        return;
+      }
+      const result = await supabaseClient.auth.resetPasswordForEmail(email, { redirectTo: authRedirectUrl });
+      $("#loginStatus").textContent = result.error ? authErrorMessage(result.error) : "Password reset email sent.";
+    });
+  }
+}
+
+async function authCallbackPage() {
+  if (!supabaseClient) {
+    $("#authStatus").textContent = "Supabase config is missing.";
+    return;
+  }
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("code")) {
+      const exchanged = await supabaseClient.auth.exchangeCodeForSession(params.get("code"));
+      if (exchanged.error) throw exchanged.error;
     }
-  });
+    const result = await supabaseClient.auth.getSession();
+    session = result.data.session;
+    user = session && session.user;
+    if (!user) {
+      $("#authStatus").textContent = "Auth link opened, but no session was created. Try logging in again.";
+      return;
+    }
+    if (window.location.hash.includes("type=recovery") || window.location.search.includes("type=recovery")) {
+      $("#authStatus").innerHTML = `
+        <form id="passwordUpdateForm" class="form-grid">
+          <label class="full" for="newPassword">New password</label>
+          <input id="newPassword" class="full" type="password" minlength="6" required>
+          <button class="full">Update password</button>
+        </form>`;
+      $("#passwordUpdateForm").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const updated = await supabaseClient.auth.updateUser({ password: $("#newPassword").value });
+        $("#authStatus").textContent = updated.error ? authErrorMessage(updated.error) : "Password updated. Opening dashboard...";
+        if (!updated.error) window.location.href = "dashboard.html";
+      });
+      return;
+    }
+    await ensureProfile();
+    $("#authStatus").textContent = "Authenticated. Opening dashboard...";
+    window.location.href = "dashboard.html";
+  } catch (error) {
+    $("#authStatus").textContent = authErrorMessage(error);
+  }
 }
 
 function handleCommand(event) {
@@ -674,5 +730,6 @@ function landing() {
 
 const renderers = { dashboard, notes, planner, assistant, timer: timerPage, flashcards, quiz, progress, resources, settings };
 if (page === "login") loginPage();
+else if (page === "auth") authCallbackPage();
 else if ($("#app")) (renderers[page] || dashboard)();
 else landing();
