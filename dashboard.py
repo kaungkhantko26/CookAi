@@ -39,6 +39,7 @@ PUBLIC_ENDPOINTS = {
     "web_terminal",
     "web_chat",
     "web_health",
+    "redeem_web_hash",
 }
 
 
@@ -417,6 +418,19 @@ def web_chat() -> Any:
         return jsonify({"ok": False, "reply": f"Error: {exc}"}), 500
 
     return jsonify({"ok": True, "reply": answer})
+
+
+@app.route("/api/redeem-hash", methods=["POST", "OPTIONS"])
+def redeem_web_hash() -> Any:
+    if request.method == "OPTIONS":
+        return ("", 204)
+
+    payload = request.get_json(silent=True) or {}
+    login_hash = str(payload.get("hash") or "").strip()
+    client_key = str(payload.get("client_id") or "")
+    user_id = get_web_user_id(client_key)
+    success, message = bot.consume_login_hash(user_id, login_hash)
+    return jsonify({"ok": success, "message": message})
 
 
 @app.post("/hash")
