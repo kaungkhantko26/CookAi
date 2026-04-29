@@ -18,6 +18,7 @@ const cfg = window.MENTOR_SUPABASE || {};
 const supabase = window.supabase && cfg.url && cfg.anonKey
   ? window.supabase.createClient(cfg.url, cfg.anonKey)
   : null;
+const authRedirectUrl = `${window.location.origin}${window.location.pathname.replace(/[^/]*$/, "")}auth.html`;
 
 let session = null;
 let user = null;
@@ -89,6 +90,18 @@ async function initAuth() {
     user = nextSession && nextSession.user;
     if (!user && page !== "login" && $("#app")) window.location.href = "login.html";
   });
+}
+
+function authErrorMessage(error) {
+  if (!error) return "Authentication failed. Try again.";
+  const message = error.message || String(error);
+  if (message.toLowerCase().includes("email not confirmed")) {
+    return "Email is not confirmed yet. Check your inbox or resend the confirmation email.";
+  }
+  if (message.toLowerCase().includes("invalid login")) {
+    return "Email or password is incorrect. If you just signed up, confirm your email first.";
+  }
+  return message;
 }
 
 async function ensureProfile() {
@@ -181,18 +194,27 @@ function renderShell(title, subtitle) {
 async function boot(title, subtitle, render) {
   renderShell(title, subtitle);
   if (!supabase) return;
-  await initAuth();
-  if (!user) {
-    window.location.href = "login.html";
-    return;
-  }
-  await ensureProfile();
-  await fetchAll();
-  render();
-  subscribeRealtime(async () => {
+  try {
+    await initAuth();
+    if (!user) {
+      window.location.href = "login.html";
+      return;
+    }
+    await ensureProfile();
     await fetchAll();
     render();
-  });
+    subscribeRealtime(async () => {
+      await fetchAll();
+      render();
+    });
+  } catch (error) {
+    $("#content").innerHTML = `
+      <article class="card full">
+        <h2>Setup issue</h2>
+        <p class="muted">${escapeHtml(error.message || String(error))}</p>
+        <p class="muted">Make sure <code>supabase.sql</code> has been run and email auth is enabled in Supabase.</p>
+      </article>`;
+  }
 }
 
 function stats() {
@@ -551,8 +573,12 @@ async function loginPage() {
     $("#loginStatus").textContent = "Supabase config is missing. Add secrets and redeploy.";
     return;
   }
-  await initAuth();
-  if (user) window.location.href = "dashboard.html";
+  try {
+    await initAuth();
+    if (user) window.location.href = "dashboard.html";
+  } catch (error) {
+    $("#loginStatus").textContent = authErrorMessage(error);
+  }
   $("#loginForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const email = $("#email").value.trim();
@@ -561,10 +587,10 @@ async function loginPage() {
     const mode = event.submitter.dataset.mode;
     $("#loginStatus").textContent = "Working...";
     const result = mode === "signup"
-      ? await supabase.auth.signUp({ email, password, options: { data: { name } } })
+      ? await supabase.auth.signUp({ email, password, options: { data: { name }, emailRedirectTo: authRedirectUrl } })
       : await supabase.auth.signInWithPassword({ email, password });
     if (result.error) {
-      $("#loginStatus").textContent = result.error.message;
+      $("#loginStatus").textContent = authErrorMessage(result.error);
       return;
     }
     session = result.data.session;
@@ -576,6 +602,51 @@ async function loginPage() {
     await ensureProfile();
     window.location.href = "dashboard.html";
   });
+  const resend = $("#resendConfirm");
+  if (resend) {
+    resend.addEventListener("click", async () => {
+      const email = $("#email").value.trim();
+      if (!email) {
+        $("#loginStatus").textContent = "Enter your email first.";
+        return;
+      }
+      const result = await supabase.auth.resend({ type: "signup", email, options: { emailRedirectTo: authRedirectUrl } });
+      $("#loginStatus").textContent = result.error ? authErrorMessage(result.error) : "Confirmation email sent. Check your inbox.";
+    });
+  }
+  const reset = $("#resetPassword");
+  if (reset) {
+    reset.addEventListener("click", async () => {
+      const email = $("#email").value.trim();
+      if (!email) {
+        $("#loginStatus").textContent = "Enter your email first.";
+        return;
+      }
+      const result = await supabase.auth.resetPasswordForEmail(email, { redirectTo: authRedirectUrl });
+      $("#loginStatus").textContent = result.error ? authErrorMessage(result.error) : "Password reset email sent.";
+    });
+  }
+}
+
+async function authCallbackPage() {
+  if (!supabase) {
+    $("#authStatus").textContent = "Supabase config is missing.";
+    return;
+  }
+  try {
+    const result = await supabase.auth.getSession();
+    session = result.data.session;
+    user = session && session.user;
+    if (!user) {
+      $("#authStatus").textContent = "Auth link opened, but no session was created. Try logging in again.";
+      return;
+    }
+    await ensureProfile();
+    $("#authStatus").textContent = "Authenticated. Opening dashboard...";
+    window.location.href = "dashboard.html";
+  } catch (error) {
+    $("#authStatus").textContent = authErrorMessage(error);
+  }
 }
 
 function handleCommand(event) {
@@ -632,5 +703,6 @@ function landing() {
 
 const renderers = { dashboard, notes, planner, assistant, timer: timerPage, flashcards, quiz, progress, resources, settings };
 if (page === "login") loginPage();
+else if (page === "auth") authCallbackPage();
 else if ($("#app")) (renderers[page] || dashboard)();
 else landing();
