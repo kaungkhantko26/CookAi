@@ -7,57 +7,28 @@ const NAV_ITEMS = [
   ["flashcards", "Flashcards", "flashcards.html"],
   ["progress", "Progress", "progress.html"],
   ["resources", "Resources", "resources.html"],
-  ["portfolio", "Portfolio", "portfolio.html"],
+  ["chat", "Terminal Chat", "chat.html", "_blank"],
   ["settings", "Settings", "settings.html"]
 ];
 
-const STORE = "kaung_study_os";
-const CLIENT_ID_KEY = "kaung_study_client_id";
 const API_URL = "https://bot.kaungkhantko.top/api/chat";
+const CLIENT_ID_KEY = "mentor_client_id";
 const page = document.body.dataset.page || "dashboard";
+const cfg = window.MENTOR_SUPABASE || {};
+const supabase = window.supabase && cfg.url && cfg.anonKey
+  ? window.supabase.createClient(cfg.url, cfg.anonKey)
+  : null;
 
-const seed = {
-  notes: [
-    { id: "n1", title: "Linux Commands", content: "ls, cd, pwd, grep, chmod, systemctl, journalctl", tags: ["Linux", "Exam"], pinned: true, updated: "Today" },
-    { id: "n2", title: "OSI Model", content: "Physical, Data Link, Network, Transport, Session, Presentation, Application.", tags: ["Networking"], pinned: false, updated: "Yesterday" }
-  ],
-  tasks: [
-    { id: "t1", title: "Review subnetting", priority: "High", done: false },
-    { id: "t2", title: "Make Python loop flashcards", priority: "Medium", done: false },
-    { id: "t3", title: "Quiz firewall rules", priority: "High", done: false }
-  ],
-  flashcards: [
-    { id: "f1", q: "What is NAT?", a: "Network Address Translation", known: false },
-    { id: "f2", q: "Which OSI layer uses IP?", a: "Layer 3, Network layer", known: true }
-  ],
-  sessions: [{ date: "Mon", minutes: 90 }, { date: "Tue", minutes: 120 }, { date: "Wed", minutes: 70 }, { date: "Thu", minutes: 130 }, { date: "Fri", minutes: 60 }, { date: "Sat", minutes: 150 }, { date: "Sun", minutes: 95 }],
-  xp: 1200,
-  level: 4,
-  streak: 5
-};
+let session = null;
+let user = null;
+let profile = null;
+let cache = { notes: [], tasks: [], sessions: [], flashcards: [], quizzes: [], resources: [], aiChats: [] };
+let channel = null;
+let editingNoteId = null;
 
-function state() {
-  const saved = JSON.parse(localStorage.getItem(STORE) || "null");
-  if (saved) return saved;
-  localStorage.setItem(STORE, JSON.stringify(seed));
-  return structuredClone(seed);
-}
-
-function save(next) {
-  localStorage.setItem(STORE, JSON.stringify(next));
-}
-
-function clientId() {
-  const existing = localStorage.getItem(CLIENT_ID_KEY);
-  if (existing) return existing;
-  const generated = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
-  localStorage.setItem(CLIENT_ID_KEY, generated);
-  return generated;
-}
-
-function $(selector) {
-  return document.querySelector(selector);
-}
+const todayIso = () => new Date().toISOString().slice(0, 10);
+const $ = (selector) => document.querySelector(selector);
+const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
 function escapeHtml(value) {
   return String(value || "")
@@ -68,25 +39,109 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+function renderMarkdown(value) {
+  return escapeHtml(value)
+    .replace(/^### (.*)$/gm, "<h3>$1</h3>")
+    .replace(/^## (.*)$/gm, "<h2>$1</h2>")
+    .replace(/^# (.*)$/gm, "<h2>$1</h2>")
+    .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+    .replace(/^- (.*)$/gm, "<br>• $1")
+    .replace(/\n/g, "<br>");
+}
+
+function clientId() {
+  const existing = localStorage.getItem(CLIENT_ID_KEY);
+  if (existing) return existing;
+  const generated = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+  localStorage.setItem(CLIENT_ID_KEY, generated);
+  return generated;
+}
+
 function toast(message) {
   const node = $("#toast");
   if (!node) return;
   node.textContent = message;
   node.classList.remove("hidden");
   clearTimeout(window.toastTimer);
-  window.toastTimer = setTimeout(() => node.classList.add("hidden"), 3200);
+  window.toastTimer = setTimeout(() => node.classList.add("hidden"), 3600);
 }
 
-async function askAi(message, mode = "Explain Mode") {
-  const prompt = `[${mode}] ${message}`;
-  const response = await fetch(API_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message: prompt, clientId: clientId(), language: "default" })
+function moneyDate(value) {
+  if (!value) return "Today";
+  return new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function requireSupabaseMessage() {
+  return `
+    <article class="card full">
+      <h2>Supabase setup required</h2>
+      <p class="muted">Add GitHub Pages secrets <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code>, then run the SQL in <code>supabase.sql</code>. After that, login, signup, realtime stats, and all data features will work.</p>
+    </article>`;
+}
+
+async function initAuth() {
+  if (!supabase) return;
+  const result = await supabase.auth.getSession();
+  session = result.data.session;
+  user = session && session.user;
+  supabase.auth.onAuthStateChange((_event, nextSession) => {
+    session = nextSession;
+    user = nextSession && nextSession.user;
+    if (!user && page !== "login" && $("#app")) window.location.href = "login.html";
   });
-  if (!response.ok) throw new Error("AI request failed");
-  const data = await response.json();
-  return data.reply || data.message || "No reply returned.";
+}
+
+async function ensureProfile() {
+  if (!supabase || !user) return null;
+  const existing = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
+  if (existing.error) throw existing.error;
+  if (existing.data) {
+    profile = existing.data;
+    return profile;
+  }
+  const name = user.user_metadata && user.user_metadata.name ? user.user_metadata.name : "Kaung";
+  const inserted = await supabase.from("profiles").insert({ id: user.id, email: user.email, name }).select().single();
+  if (inserted.error) throw inserted.error;
+  profile = inserted.data;
+  return profile;
+}
+
+async function fetchAll() {
+  if (!supabase || !user) return cache;
+  const [notes, tasks, sessionsResult, cards, quizzes, resources, chats] = await Promise.all([
+    supabase.from("notes").select("*").eq("user_id", user.id).order("pinned", { ascending: false }).order("updated_at", { ascending: false }),
+    supabase.from("tasks").select("*").eq("user_id", user.id).order("due_date", { ascending: true }),
+    supabase.from("study_sessions").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
+    supabase.from("flashcards").select("*").eq("user_id", user.id).order("updated_at", { ascending: false }),
+    supabase.from("quizzes").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
+    supabase.from("resources").select("*").order("category", { ascending: true }),
+    supabase.from("ai_chats").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(20)
+  ]);
+  for (const result of [notes, tasks, sessionsResult, cards, quizzes, resources, chats]) {
+    if (result.error) throw result.error;
+  }
+  cache = {
+    notes: notes.data || [],
+    tasks: tasks.data || [],
+    sessions: sessionsResult.data || [],
+    flashcards: cards.data || [],
+    quizzes: quizzes.data || [],
+    resources: resources.data || [],
+    aiChats: chats.data || []
+  };
+  return cache;
+}
+
+function subscribeRealtime(onChange) {
+  if (!supabase || !user || channel) return;
+  channel = supabase.channel(`mentor-user-${user.id}`)
+    .on("postgres_changes", { event: "*", schema: "public", table: "notes", filter: `user_id=eq.${user.id}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "tasks", filter: `user_id=eq.${user.id}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "study_sessions", filter: `user_id=eq.${user.id}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "flashcards", filter: `user_id=eq.${user.id}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "quizzes", filter: `user_id=eq.${user.id}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "ai_chats", filter: `user_id=eq.${user.id}` }, onChange)
+    .subscribe();
 }
 
 function renderShell(title, subtitle) {
@@ -95,27 +150,27 @@ function renderShell(title, subtitle) {
   app.innerHTML = `
     <aside class="sidebar">
       <div class="brand">
-        <strong>Kaung Study OS</strong>
+        <strong>MENTOR</strong>
         <span>terminal student workspace</span>
       </div>
       <nav class="nav" aria-label="Main navigation">
-        ${NAV_ITEMS.map(([id, label, href]) => `<a class="${id === page ? "active" : ""}" href="${href}">${label}</a>`).join("")}
+        ${NAV_ITEMS.map(([id, label, href, target]) => `<a class="${id === page ? "active" : ""}" href="${href}" ${target ? `target="${target}" rel="noopener"` : ""}>${label}</a>`).join("")}
       </nav>
     </aside>
     <main class="main">
       <div class="topline">
         <div class="window-dots"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
-        <span class="muted">root@study:~/${page}# online</span>
+        <span class="muted">root@mentor:~/${page}# ${user ? escapeHtml(user.email) : "guest"}</span>
       </div>
       <section class="page-title">
         <h1>${title}</h1>
         <p>${subtitle}</p>
       </section>
-      <section id="content"></section>
+      <section id="content">${supabase ? '<article class="card full"><p class="muted">Loading realtime data...</p></article>' : requireSupabaseMessage()}</section>
     </main>
     <form id="commandForm" class="command-bar" autocomplete="off">
-      <label class="prompt" for="command">root@study:~#</label>
-      <input id="command" name="command" type="text" placeholder="help, dashboard, notes, new note, timer, ask, quiz, flashcards, portfolio">
+      <label class="prompt" for="command">root@mentor:~#</label>
+      <input id="command" name="command" type="text" placeholder="help, dashboard, notes, new note, tasks, timer, ask, quiz, flashcards, chat, settings">
       <button type="submit">run</button>
     </form>
     <div id="toast" class="toast hidden" role="status"></div>
@@ -123,265 +178,410 @@ function renderShell(title, subtitle) {
   $("#commandForm").addEventListener("submit", handleCommand);
 }
 
+async function boot(title, subtitle, render) {
+  renderShell(title, subtitle);
+  if (!supabase) return;
+  await initAuth();
+  if (!user) {
+    window.location.href = "login.html";
+    return;
+  }
+  await ensureProfile();
+  await fetchAll();
+  render();
+  subscribeRealtime(async () => {
+    await fetchAll();
+    render();
+  });
+}
+
+function stats() {
+  const totalMinutes = cache.sessions.reduce((sum, item) => sum + Number(item.minutes || 0), 0);
+  const todayMinutes = cache.sessions.filter((item) => String(item.session_date).slice(0, 10) === todayIso()).reduce((sum, item) => sum + Number(item.minutes || 0), 0);
+  const completedTasks = cache.tasks.filter((task) => task.done).length;
+  const tasksLeft = cache.tasks.filter((task) => !task.done).length;
+  const known = cache.flashcards.filter((card) => card.known).length;
+  const xp = Number(profile && profile.xp ? profile.xp : 0) + totalMinutes + completedTasks * 10 + known * 5;
+  return {
+    totalMinutes,
+    todayMinutes,
+    tasksLeft,
+    streak: Number(profile && profile.streak ? profile.streak : 0),
+    level: Math.max(1, Math.floor(xp / 300) + 1),
+    xp,
+    flashcardAccuracy: cache.flashcards.length ? Math.round((known / cache.flashcards.length) * 100) : 0,
+    quizAverage: cache.quizzes.length ? Math.round(cache.quizzes.reduce((sum, quiz) => sum + Number(quiz.score || 0), 0) / cache.quizzes.length) : 0
+  };
+}
+
 function dashboard() {
-  const s = state();
-  renderShell("Welcome back, Kaung", "Today’s Study Goal: 2 hours. Current Streak: 5 days. Next Exam: Networking - 4 days left.");
-  $("#content").innerHTML = `
-    <div class="grid">
-      <article class="card"><h2>Study Goal</h2><span class="metric">2h</span><p class="muted">70 minutes completed today</p></article>
-      <article class="card"><h2>Current Streak</h2><span class="metric">${s.streak} days</span><p class="muted">Keep the daily session alive</p></article>
-      <article class="card"><h2>Tasks Left</h2><span class="metric">${s.tasks.filter((t) => !t.done).length}</span><p class="muted">Networking exam in 4 days</p></article>
-      <article class="card wide"><h2>Today’s tasks</h2><ul class="list">${s.tasks.map((task) => `<li><strong>${escapeHtml(task.title)}</strong><br><span class="muted">${task.priority} priority</span></li>`).join("")}</ul></article>
-      <article class="card"><h2>Pomodoro timer</h2><div class="timer-display" id="miniTimer">25:00</div><div class="actions"><button data-cmd="timer">Start</button><button class="secondary" data-cmd="planner">Plan</button></div></article>
-      <article class="card"><h2>XP / Level</h2><span class="metric">Lv ${s.level}</span><div class="progress-track"><div class="progress-fill" style="--value:72%"></div></div><p class="muted">${s.xp} XP earned</p></article>
-      <article class="card"><h2>Recent notes</h2><ul class="list">${s.notes.slice(0, 2).map(noteItem).join("")}</ul></article>
-      <article class="card wide"><h2>Quick AI ask</h2><textarea id="quickAsk" placeholder="Explain OSI model simply"></textarea><div class="actions"><button data-quick-ai="Explain Mode">Explain</button><button data-quick-ai="Quiz Mode">Quiz</button><button data-quick-ai="Roadmap Mode">Roadmap</button></div></article>
-    </div>`;
-  wireButtons();
-  document.querySelectorAll("[data-quick-ai]").forEach((button) => button.addEventListener("click", async () => {
-    const box = $("#quickAsk");
-    const question = box.value.trim() || box.placeholder;
-    button.disabled = true;
-    toast("Asking AI assistant...");
-    try {
-      const reply = await askAi(question, button.dataset.quickAi);
-      box.value = reply;
-      toast("AI reply loaded");
-    } catch {
-      toast("AI endpoint is not reachable right now");
-    } finally {
-      button.disabled = false;
-    }
-  }));
+  boot("Welcome back, Kaung", "Realtime study command center with live goals, tasks, notes, XP, and AI help.", () => {
+    const s = stats();
+    $("#content").innerHTML = `
+      <div class="grid">
+        <article class="card"><h2>Today’s Study Goal</h2><span class="metric">${Math.round(s.todayMinutes / 60 * 10) / 10}h / 2h</span><div class="progress-track"><div class="progress-fill" style="--value:${Math.min(100, s.todayMinutes / 120 * 100)}%"></div></div></article>
+        <article class="card"><h2>Current Streak</h2><span class="metric">${s.streak} days</span><p class="muted">Updates from your profile row</p></article>
+        <article class="card"><h2>Tasks Left</h2><span class="metric">${s.tasksLeft}</span><p class="muted">Realtime from Supabase tasks</p></article>
+        <article class="card wide"><h2>Today’s tasks</h2><ul class="list">${cache.tasks.slice(0, 5).map(taskRow).join("") || "<li>No tasks yet.</li>"}</ul></article>
+        <article class="card"><h2>Pomodoro timer</h2><div class="timer-display">25:00</div><div class="actions"><button data-cmd="timer">Start</button><button class="secondary" data-cmd="planner">Plan</button></div></article>
+        <article class="card"><h2>XP / Level</h2><span class="metric">Lv ${s.level}</span><div class="progress-track"><div class="progress-fill" style="--value:${s.xp % 300 / 300 * 100}%"></div></div><p class="muted">${s.xp} XP</p></article>
+        <article class="card"><h2>Recent notes</h2><ul class="list">${cache.notes.slice(0, 2).map(noteItem).join("") || "<li>No notes yet.</li>"}</ul></article>
+        <article class="card wide"><h2>Quick AI ask</h2><textarea id="quickAsk" placeholder="Explain OSI model simply"></textarea><div class="actions"><button data-quick-ai="Explain Mode">Explain</button><button data-quick-ai="Quiz Mode">Quiz</button><button data-quick-ai="Roadmap Mode">Roadmap</button></div></article>
+      </div>`;
+    wireButtons();
+    wireQuickAi();
+  });
+}
+
+function taskRow(task) {
+  return `<li><label><input type="checkbox" data-task-done="${task.id}" ${task.done ? "checked" : ""}> <strong>${escapeHtml(task.title)}</strong></label><br><span class="muted">${escapeHtml(task.priority || "Normal")} priority ${task.due_date ? ` · due ${moneyDate(task.due_date)}` : ""}</span></li>`;
 }
 
 function noteItem(note) {
-  return `<li><strong>${note.pinned ? "Pinned: " : ""}${escapeHtml(note.title)}</strong><br><span class="muted">${escapeHtml(note.updated)}</span><div class="tag-row">${note.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div></li>`;
+  const tags = Array.isArray(note.tags) ? note.tags : [];
+  return `<li><strong>${note.pinned ? "Pinned: " : ""}${escapeHtml(note.title)}</strong><br><span class="muted">Updated: ${moneyDate(note.updated_at)}</span><div class="tag-row">${tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div></li>`;
 }
 
 function notes() {
-  const s = state();
-  renderShell("Smart Notes", "Create, edit, delete, search, tag, pin, and use AI actions on study notes.");
-  $("#content").innerHTML = `
-    <div class="grid">
-      <article class="card full">
-        <div class="form-grid">
-          <input id="noteSearch" placeholder="Search notes">
-          <input id="noteTags" placeholder="Tags: Linux, Exam">
-          <input id="noteTitle" class="full" placeholder="Note title">
-          <textarea id="noteContent" class="full" placeholder="Markdown supported: ## Heading, - list, **important**"></textarea>
-          <button id="saveNote">Create note</button>
-          <button id="pinNote" class="secondary" type="button">Pin important note</button>
-        </div>
-      </article>
-      <div id="notesList" class="grid full"></div>
-    </div>`;
-  function renderNotes() {
-    const query = $("#noteSearch").value.toLowerCase();
-    const fresh = state();
-    $("#notesList").innerHTML = fresh.notes
-      .filter((note) => `${note.title} ${note.content} ${note.tags.join(" ")}`.toLowerCase().includes(query))
-      .map((note) => `
+  boot("Smart Notes", "Realtime markdown notes with tags, search, pin, edit, delete, and AI actions.", () => {
+    $("#content").innerHTML = `
+      <div class="grid">
+        <article class="card full">
+          <form id="noteForm" class="form-grid">
+            <input id="noteSearch" placeholder="Search notes" type="search">
+            <input id="noteTags" placeholder="Tags: Linux, Exam">
+            <input id="noteTitle" class="full" placeholder="Note title" required>
+            <textarea id="noteContent" class="full" placeholder="Markdown supported: ## Heading, - list, **important**"></textarea>
+            <label class="check"><input id="notePinned" type="checkbox"> Pin important note</label>
+            <button id="noteSubmit">Create note</button>
+            <button id="cancelEdit" type="button" class="secondary hidden">Cancel edit</button>
+          </form>
+        </article>
+        <div id="notesList" class="grid full"></div>
+      </div>`;
+    const renderNotes = () => {
+      const query = ($("#noteSearch").value || "").toLowerCase();
+      $("#notesList").innerHTML = cache.notes.filter((note) => `${note.title} ${note.content} ${(note.tags || []).join(" ")}`.toLowerCase().includes(query)).map((note) => `
         <article class="card note-card">
           <h2>${note.pinned ? "Pinned: " : ""}${escapeHtml(note.title)}</h2>
-          <p class="muted">Updated: ${escapeHtml(note.updated)}</p>
-          <p>${escapeHtml(note.content)}</p>
-          <div class="tag-row">${note.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div>
+          <p class="muted">Updated: ${moneyDate(note.updated_at)}</p>
+          <div>${renderMarkdown(note.content)}</div>
+          <div class="tag-row">${(note.tags || []).map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div>
           <div class="actions">
-            <button data-note-ai="Summarize" data-title="${escapeHtml(note.title)}">Summarize</button>
-            <button data-note-ai="Quiz" data-title="${escapeHtml(note.title)}">Quiz</button>
-            <button data-note-ai="Flashcards" data-title="${escapeHtml(note.title)}">Flashcards</button>
+            <button data-note-ai="Summary Mode" data-note="${note.id}">Summarize</button>
+            <button data-note-ai="Quiz Mode" data-note="${note.id}">Quiz</button>
+            <button data-note-ai="Flashcard Mode" data-note="${note.id}">Flashcards</button>
+            <button class="secondary" data-edit-note="${note.id}">Edit</button>
+            <button class="secondary" data-pin-note="${note.id}">${note.pinned ? "Unpin" : "Pin"}</button>
             <button class="secondary" data-delete-note="${note.id}">Delete</button>
           </div>
-        </article>`).join("");
-    wireButtons();
-    document.querySelectorAll("[data-delete-note]").forEach((button) => button.addEventListener("click", () => {
-      const next = state();
-      next.notes = next.notes.filter((note) => note.id !== button.dataset.deleteNote);
-      save(next);
-      renderNotes();
-      toast("Note deleted");
-    }));
-  }
-  $("#saveNote").addEventListener("click", (event) => {
-    event.preventDefault();
-    const title = $("#noteTitle").value.trim();
-    if (!title) return toast("Add a note title first");
-    const next = state();
-    next.notes.unshift({ id: crypto.randomUUID(), title, content: $("#noteContent").value.trim(), tags: $("#noteTags").value.split(",").map((tag) => tag.trim()).filter(Boolean), pinned: false, updated: "Today" });
-    save(next);
-    $("#noteTitle").value = "";
-    $("#noteContent").value = "";
+        </article>`).join("") || '<article class="card full"><p class="muted">No matching notes.</p></article>';
+      wireNoteButtons();
+    };
+    $("#noteForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const payload = {
+        title: $("#noteTitle").value.trim(),
+        content: $("#noteContent").value.trim(),
+        tags: $("#noteTags").value.split(",").map((tag) => tag.trim()).filter(Boolean),
+        pinned: $("#notePinned").checked
+      };
+      if (editingNoteId) {
+        await supabase.from("notes").update(payload).eq("id", editingNoteId).eq("user_id", user.id);
+        editingNoteId = null;
+        $("#noteSubmit").textContent = "Create note";
+        $("#cancelEdit").classList.add("hidden");
+      } else {
+        await supabase.from("notes").insert({ ...payload, user_id: user.id });
+      }
+      event.target.reset();
+      toast("Note saved");
+    });
+    $("#cancelEdit").addEventListener("click", () => {
+      editingNoteId = null;
+      $("#noteForm").reset();
+      $("#noteSubmit").textContent = "Create note";
+      $("#cancelEdit").classList.add("hidden");
+    });
+    $("#noteSearch").addEventListener("input", renderNotes);
     renderNotes();
-    toast("Note created");
   });
-  $("#pinNote").addEventListener("click", () => toast("New notes can be pinned from the saved note menu after Firebase is connected"));
-  $("#noteSearch").addEventListener("input", renderNotes);
-  renderNotes();
+}
+
+function wireNoteButtons() {
+  $$("[data-delete-note]").forEach((button) => button.addEventListener("click", async () => {
+    await supabase.from("notes").delete().eq("id", button.dataset.deleteNote).eq("user_id", user.id);
+    toast("Note deleted");
+  }));
+  $$("[data-pin-note]").forEach((button) => button.addEventListener("click", async () => {
+    const note = cache.notes.find((item) => item.id === button.dataset.pinNote);
+    await supabase.from("notes").update({ pinned: !note.pinned }).eq("id", note.id).eq("user_id", user.id);
+  }));
+  $$("[data-edit-note]").forEach((button) => button.addEventListener("click", () => {
+    const note = cache.notes.find((item) => item.id === button.dataset.editNote);
+    if (!note) return;
+    editingNoteId = note.id;
+    $("#noteTitle").value = note.title || "";
+    $("#noteContent").value = note.content || "";
+    $("#noteTags").value = (note.tags || []).join(", ");
+    $("#notePinned").checked = Boolean(note.pinned);
+    $("#noteSubmit").textContent = "Save changes";
+    $("#cancelEdit").classList.remove("hidden");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }));
+  $$("[data-note-ai]").forEach((button) => button.addEventListener("click", async () => {
+    const note = cache.notes.find((item) => item.id === button.dataset.note);
+    const reply = await askAi(`${note.title}\n${note.content}`, button.dataset.noteAi);
+    await supabase.from("ai_chats").insert({ user_id: user.id, mode: button.dataset.noteAi, prompt: note.title, response: reply });
+    toast("AI result saved in Assistant history");
+  }));
 }
 
 function planner() {
-  renderShell("Study Planner", "Calendar-style goals, subject planner, deadline tracker, weekly schedule, and task priority.");
-  $("#content").innerHTML = `
-    <div class="grid">
-      <article class="card"><h2>Daily goal</h2><span class="metric">2h</span><p class="muted">Networking deadline: 4 days</p></article>
-      <article class="card wide"><h2>Monday</h2><ul class="list"><li>7:00 PM: Python</li><li>8:00 PM: Networking</li><li>9:00 PM: Quiz Review</li></ul></article>
-      ${["Tuesday: Linux commands", "Wednesday: Web security", "Thursday: AI revision", "Friday: IELTS writing", "Saturday: Portfolio project", "Sunday: Mock exam"].map((item) => `<article class="card"><h2>${item.split(":")[0]}</h2><p>${item.split(":")[1]}</p><span class="tag">Medium priority</span></article>`).join("")}
-    </div>`;
+  boot("Study Planner", "Realtime subject planner, deadline tracker, weekly schedule, and task priority.", () => {
+    $("#content").innerHTML = `
+      <div class="grid">
+        <article class="card full">
+          <form id="taskForm" class="form-grid">
+            <input id="taskTitle" placeholder="Task title" required>
+            <input id="taskSubject" placeholder="Subject">
+            <select id="taskPriority"><option>High</option><option>Medium</option><option>Low</option></select>
+            <input id="taskDue" type="date">
+            <button>Add task</button>
+          </form>
+        </article>
+        <article class="card wide"><h2>Weekly schedule</h2><ul class="list">${cache.tasks.map(taskRow).join("") || "<li>No planned tasks yet.</li>"}</ul></article>
+        <article class="card"><h2>Next Exam</h2><span class="metric">${nextExamText()}</span><p class="muted">Based on earliest high priority deadline</p></article>
+      </div>`;
+    $("#taskForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      await supabase.from("tasks").insert({ user_id: user.id, title: $("#taskTitle").value.trim(), subject: $("#taskSubject").value.trim(), priority: $("#taskPriority").value, due_date: $("#taskDue").value || null });
+      event.target.reset();
+    });
+    wireTaskChecks();
+  });
+}
+
+function nextExamText() {
+  const next = cache.tasks.filter((task) => task.due_date && !task.done).sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)))[0];
+  if (!next) return "No deadline";
+  const days = Math.ceil((new Date(next.due_date) - new Date(todayIso())) / 86400000);
+  return `${next.subject || next.title} - ${Math.max(0, days)} days`;
+}
+
+function wireTaskChecks() {
+  $$("[data-task-done]").forEach((box) => box.addEventListener("change", async () => {
+    await supabase.from("tasks").update({ done: box.checked }).eq("id", box.dataset.taskDone).eq("user_id", user.id);
+  }));
 }
 
 function assistant() {
-  renderShell("AI Study Assistant", "Explain, quiz, summarize, make flashcards, generate roadmaps, and prepare for exams.");
-  $("#content").innerHTML = `
-    <div class="grid">
-      <article class="card full">
-        <div class="mode-row">
-          ${["Explain Mode", "Quiz Mode", "Summary Mode", "Flashcard Mode", "Roadmap Mode", "Exam Prep Mode"].map((mode) => `<button data-mode="${mode}">${mode}</button>`).join("")}
-        </div>
-      </article>
-      <article class="card wide"><h2 id="assistantMode">Explain Mode</h2><textarea id="assistantPrompt" placeholder="Explain OSI model simply"></textarea><div class="actions"><button id="assistantRun">Ask AI</button><button class="secondary" data-cmd="quiz">Make quiz</button></div></article>
-      <article class="card"><h2>Output</h2><p id="assistantOutput" class="muted">AI response preview will appear here. Connect this to OpenRouter or Firebase Functions for live generation.</p></article>
-    </div>`;
-  document.querySelectorAll("[data-mode]").forEach((button) => button.addEventListener("click", () => $("#assistantMode").textContent = button.dataset.mode));
-  $("#assistantRun").addEventListener("click", async () => {
-    const mode = $("#assistantMode").textContent;
-    const prompt = $("#assistantPrompt").value.trim() || "Explain OSI model simply";
-    $("#assistantOutput").textContent = "Running AI assistant...";
-    try {
-      $("#assistantOutput").textContent = await askAi(prompt, mode);
-    } catch {
-      $("#assistantOutput").textContent = `${mode}: ${prompt}. Key idea, simple explanation, example, and next review step.`;
-      toast("AI endpoint is not reachable, showing local fallback");
-    }
+  boot("AI Study Assistant", "Live AI modes with saved chat history in Supabase.", () => {
+    $("#content").innerHTML = `
+      <div class="grid">
+        <article class="card full"><div class="mode-row">${["Explain Mode", "Quiz Mode", "Summary Mode", "Flashcard Mode", "Roadmap Mode", "Exam Prep Mode"].map((mode) => `<button data-mode="${mode}">${mode}</button>`).join("")}</div></article>
+        <article class="card wide"><h2 id="assistantMode">Explain Mode</h2><textarea id="assistantPrompt" placeholder="Explain OSI model simply"></textarea><div class="actions"><button id="assistantRun">Ask AI</button><button class="secondary" data-cmd="quiz">Make quiz</button></div></article>
+        <article class="card"><h2>Output</h2><p id="assistantOutput" class="muted">Ask anything. The answer is saved to ai_chats.</p></article>
+        <article class="card full"><h2>Recent AI chats</h2><ul class="list">${cache.aiChats.map((chat) => `<li><strong>${escapeHtml(chat.mode)}</strong><br>${escapeHtml(chat.prompt)}<br><span class="muted">${escapeHtml((chat.response || "").slice(0, 180))}</span></li>`).join("") || "<li>No chats yet.</li>"}</ul></article>
+      </div>`;
+    $$("[data-mode]").forEach((button) => button.addEventListener("click", () => $("#assistantMode").textContent = button.dataset.mode));
+    $("#assistantRun").addEventListener("click", async () => {
+      const mode = $("#assistantMode").textContent;
+      const prompt = $("#assistantPrompt").value.trim();
+      if (!prompt) return toast("Type a study question first");
+      $("#assistantOutput").textContent = "Running AI assistant...";
+      const reply = await askAi(prompt, mode);
+      $("#assistantOutput").textContent = reply;
+      await supabase.from("ai_chats").insert({ user_id: user.id, mode, prompt, response: reply });
+    });
+    wireButtons();
   });
-  wireButtons();
+}
+
+async function askAi(message, mode = "Explain Mode") {
+  const response = await fetch(API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message: `[${mode}] ${message}`, client_id: clientId(), language: "default" })
+  });
+  if (!response.ok) throw new Error("AI request failed");
+  const data = await response.json();
+  return data.reply || data.message || "No reply returned.";
 }
 
 function timerPage() {
-  renderShell("Pomodoro Focus", "25-minute focus, 5-minute break, long break, focus music option, and saved completed sessions.");
-  $("#content").innerHTML = `
-    <div class="grid">
-      <article class="card wide"><h2>Focus timer</h2><div id="timer" class="timer-display">25:00</div><div class="actions"><button id="startTimer">Start 25</button><button id="breakTimer" class="secondary">5 min break</button><button id="longBreak" class="secondary">Long break</button></div></article>
-      <article class="card"><h2>Session reward</h2><p>Great work!</p><span class="metric">+20 XP</span><p class="muted">Focus time saved: 25 minutes</p></article>
-      <article class="card full"><h2>Focus options</h2><div class="tag-row"><span class="tag">Focus music</span><span class="tag">Distraction blocker reminder</span><span class="tag">Save completed sessions</span></div></article>
-    </div>`;
-  let remaining = 1500;
-  let interval;
-  function draw() {
-    const m = Math.floor(remaining / 60).toString().padStart(2, "0");
-    const sec = (remaining % 60).toString().padStart(2, "0");
-    $("#timer").textContent = `${m}:${sec}`;
-  }
-  function start(seconds) {
-    clearInterval(interval);
-    remaining = seconds;
-    draw();
-    interval = setInterval(() => {
-      remaining -= 1;
+  boot("Pomodoro Focus", "Real completed focus sessions are saved to Supabase and update XP/progress live.", () => {
+    $("#content").innerHTML = `
+      <div class="grid">
+        <article class="card wide"><h2>Focus timer</h2><div id="timer" class="timer-display">25:00</div><div class="actions"><button id="startTimer">Start 25</button><button id="breakTimer" class="secondary">5 min break</button><button id="longBreak" class="secondary">Long break</button><label class="check"><input id="music" type="checkbox"> Focus music</label></div></article>
+        <article class="card"><h2>Saved sessions</h2><span class="metric">${cache.sessions.length}</span><p class="muted">${stats().totalMinutes} total minutes</p></article>
+      </div>`;
+    let remaining = 1500;
+    let interval;
+    const draw = () => $("#timer").textContent = `${String(Math.floor(remaining / 60)).padStart(2, "0")}:${String(remaining % 60).padStart(2, "0")}`;
+    const start = (seconds) => {
+      clearInterval(interval);
+      remaining = seconds;
       draw();
-      if (remaining <= 0) {
-        clearInterval(interval);
-        const next = state();
-        next.xp += 20;
-        next.sessions.push({ date: "Today", minutes: seconds / 60 });
-        save(next);
-        toast("Great work! +20 XP. Focus time saved.");
-      }
-    }, 1000);
-  }
-  $("#startTimer").addEventListener("click", () => start(1500));
-  $("#breakTimer").addEventListener("click", () => start(300));
-  $("#longBreak").addEventListener("click", () => start(900));
+      interval = setInterval(async () => {
+        remaining -= 1;
+        draw();
+        if (remaining <= 0) {
+          clearInterval(interval);
+          await supabase.from("study_sessions").insert({ user_id: user.id, minutes: Math.round(seconds / 60), session_date: todayIso(), kind: seconds >= 1500 ? "focus" : "break" });
+          toast(`Great work! +${seconds >= 1500 ? 20 : 5} XP. Focus time saved.`);
+        }
+      }, 1000);
+    };
+    $("#startTimer").addEventListener("click", () => start(1500));
+    $("#breakTimer").addEventListener("click", () => start(300));
+    $("#longBreak").addEventListener("click", () => start(900));
+  });
 }
 
 function flashcards() {
-  const s = state();
-  renderShell("Flashcards", "Manual and AI-generated cards with flip review, known and not known tracking, and review schedule.");
-  $("#content").innerHTML = `
-    <div class="grid">
-      <article class="card full"><div class="form-grid"><input id="cardQ" placeholder="Question"><input id="cardA" placeholder="Answer"><button id="addCard">Add flashcard</button><button class="secondary" data-cmd="ask make flashcards for Python loops">AI generate</button></div></article>
-      ${s.flashcards.map((card) => `<article class="card"><h2>Q: ${escapeHtml(card.q)}</h2><p class="flashcard-face">A: ${escapeHtml(card.a)}</p><div class="actions"><button data-known="${card.id}">Known</button><button class="secondary" data-unknown="${card.id}">Not Known</button></div></article>`).join("")}
-    </div>`;
-  $("#addCard").addEventListener("click", () => {
-    const q = $("#cardQ").value.trim();
-    const a = $("#cardA").value.trim();
-    if (!q || !a) return toast("Add both question and answer");
-    const next = state();
-    next.flashcards.unshift({ id: crypto.randomUUID(), q, a, known: false });
-    save(next);
-    flashcards();
+  boot("Flashcards", "Realtime flashcards with known and not known review tracking.", () => {
+    $("#content").innerHTML = `
+      <div class="grid">
+        <article class="card full"><form id="cardForm" class="form-grid"><input id="cardQ" placeholder="Question" required><input id="cardA" placeholder="Answer" required><button>Add flashcard</button><button class="secondary" type="button" id="aiCards">AI generate from Python loops</button></form></article>
+        ${cache.flashcards.map((card) => `<article class="card"><h2>Q: ${escapeHtml(card.question)}</h2><p class="flashcard-face">A: ${escapeHtml(card.answer)}</p><div class="actions"><button data-card-known="${card.id}">Known</button><button class="secondary" data-card-unknown="${card.id}">Not Known</button></div></article>`).join("") || '<article class="card full"><p class="muted">No flashcards yet.</p></article>'}
+      </div>`;
+    $("#cardForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      await supabase.from("flashcards").insert({ user_id: user.id, question: $("#cardQ").value.trim(), answer: $("#cardA").value.trim(), known: false });
+      event.target.reset();
+    });
+    $("#aiCards").addEventListener("click", async () => {
+      const reply = await askAi("Make 5 flashcards for Python loops. Format as Q: ... A: ...", "Flashcard Mode");
+      await supabase.from("ai_chats").insert({ user_id: user.id, mode: "Flashcard Mode", prompt: "Python loops flashcards", response: reply });
+      toast("AI flashcards saved in Assistant history");
+    });
+    $$("[data-card-known], [data-card-unknown]").forEach((button) => button.addEventListener("click", async () => {
+      const id = button.dataset.cardKnown || button.dataset.cardUnknown;
+      await supabase.from("flashcards").update({ known: Boolean(button.dataset.cardKnown), next_review_at: new Date(Date.now() + 86400000).toISOString() }).eq("id", id).eq("user_id", user.id);
+    }));
   });
-  wireButtons();
 }
 
 function quiz() {
-  renderShell("Quiz Generator", "Create multiple choice, true/false, short answer, and fill-in-the-blank quizzes from notes or topics.");
-  $("#content").innerHTML = `
-    <div class="grid">
-      <article class="card wide"><h2>Create quiz</h2><textarea id="quizTopic" placeholder="Firewall rules or Linux commands"></textarea><div class="actions"><button id="makeQuiz">Generate quiz</button><button class="secondary">Multiple choice</button><button class="secondary">True / false</button><button class="secondary">Short answer</button></div></article>
-      <article class="card"><h2>After quiz</h2><span class="metric">8/10</span><p>Weak topic: Firewall rules</p><p class="muted">Suggested review: Network Security</p></article>
-      <article class="card full"><h2>Preview</h2><ul id="quizPreview" class="list"><li>1. Which command lists active firewall rules?</li><li>2. True or false: NAT changes IP address information.</li><li>3. Fill in the blank: OSI Layer 3 is the ____ layer.</li></ul></article>
-    </div>`;
-  $("#makeQuiz").addEventListener("click", () => toast("Quiz generated from topic preview"));
+  boot("Quiz Generator", "Generate quizzes from notes or topics and save real score history.", () => {
+    const last = cache.quizzes[0];
+    $("#content").innerHTML = `
+      <div class="grid">
+        <article class="card wide"><h2>Create quiz</h2><textarea id="quizTopic" placeholder="Firewall rules or Linux commands"></textarea><div class="actions"><button id="makeQuiz">Generate quiz</button><button id="saveScore" class="secondary">Save score 8/10</button></div></article>
+        <article class="card"><h2>Latest score</h2><span class="metric">${last ? `${last.score}%` : "0%"}</span><p class="muted">Weak topic: ${escapeHtml(last ? last.weak_topic || "None" : "None yet")}</p></article>
+        <article class="card full"><h2>Preview</h2><ul id="quizPreview" class="list"><li>Generate a quiz to see questions here.</li></ul></article>
+      </div>`;
+    $("#makeQuiz").addEventListener("click", async () => {
+      const topic = $("#quizTopic").value.trim() || "Networking";
+      const reply = await askAi(`Create a mixed quiz for ${topic}`, "Quiz Mode");
+      $("#quizPreview").innerHTML = `<li>${escapeHtml(reply)}</li>`;
+      await supabase.from("ai_chats").insert({ user_id: user.id, mode: "Quiz Mode", prompt: topic, response: reply });
+    });
+    $("#saveScore").addEventListener("click", async () => {
+      await supabase.from("quizzes").insert({ user_id: user.id, topic: $("#quizTopic").value.trim() || "Networking", score: 80, total_questions: 10, weak_topic: "Firewall rules", suggested_review: "Network Security" });
+      toast("Quiz score saved");
+    });
+  });
 }
 
 function progress() {
-  const s = state();
-  renderShell("Progress Tracker", "Track study hours, completed tasks, quiz scores, flashcard accuracy, streaks, and weak subjects.");
-  $("#content").innerHTML = `
-    <div class="grid">
-      <article class="card"><h2>Study hours</h2><span class="metric">12.5h</span></article>
-      <article class="card"><h2>Quiz score</h2><span class="metric">82%</span></article>
-      <article class="card"><h2>Flashcard accuracy</h2><span class="metric">76%</span></article>
-      <article class="card wide"><h2>Weekly study time</h2><div class="chart">${s.sessions.slice(0, 7).map((day) => `<div class="bar"><span style="height:${Math.max(24, day.minutes)}px"></span><span>${day.date}</span></div>`).join("")}</div></article>
-      <article class="card"><h2>Weak subjects</h2><ul class="list"><li>Firewall rules</li><li>Subnet masks</li><li>Python loops</li></ul></article>
-    </div>`;
+  boot("Progress Tracker", "Realtime progress from study sessions, completed tasks, quiz scores, and flashcard accuracy.", () => {
+    const s = stats();
+    $("#content").innerHTML = `
+      <div class="grid">
+        <article class="card"><h2>Study hours</h2><span class="metric">${Math.round(s.totalMinutes / 60 * 10) / 10}h</span></article>
+        <article class="card"><h2>Quiz average</h2><span class="metric">${s.quizAverage}%</span></article>
+        <article class="card"><h2>Flashcard accuracy</h2><span class="metric">${s.flashcardAccuracy}%</span></article>
+        <article class="card wide"><h2>Weekly study time</h2><div class="chart">${weeklyBars()}</div></article>
+        <article class="card"><h2>Weak subjects</h2><ul class="list">${cache.quizzes.slice(0, 4).map((quiz) => `<li>${escapeHtml(quiz.weak_topic || quiz.topic)}</li>`).join("") || "<li>No weak subjects yet.</li>"}</ul></article>
+      </div>`;
+  });
+}
+
+function weeklyBars() {
+  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const totals = Object.fromEntries(days.map((day) => [day, 0]));
+  cache.sessions.forEach((item) => {
+    const day = days[new Date(item.session_date || item.created_at).getDay()];
+    totals[day] += Number(item.minutes || 0);
+  });
+  return days.map((day) => `<div class="bar"><span style="height:${Math.max(20, totals[day])}px"></span><span>${day}</span></div>`).join("");
 }
 
 function resources() {
-  const items = [
-    ["Programming", "Python loops, data structures, and project practice", "Beginner", "45 min"],
-    ["Cyber Security", "Networking, firewall rules, and Linux hardening", "Intermediate", "60 min"],
-    ["AI", "Prompting, model basics, and study automation", "Beginner", "35 min"],
-    ["English / IELTS", "Writing practice and vocabulary review", "Intermediate", "50 min"],
-    ["Linux", "Commands, permissions, services, and logs", "Beginner", "40 min"],
-    ["Web Development", "HTML, CSS, JavaScript, deploy workflow", "Beginner", "70 min"],
-    ["University Assignments", "Research, outlines, citations, and presentation prep", "All levels", "30 min"]
-  ];
-  renderShell("Student Resource Hub", "A focused library for programming, cyber security, AI, English, Linux, web development, and assignments.");
-  $("#content").innerHTML = `<div class="grid">${items.map(([title, desc, difficulty, time]) => `<article class="card resource"><h2>${title}</h2><p>${desc}</p><div class="tag-row"><span class="tag">${difficulty}</span><span class="tag">${time}</span></div><button>Start</button></article>`).join("")}</div>`;
-}
-
-function portfolio() {
-  renderShell("Kaung Khant Ko", "Portfolio mode for personal brand, projects, skills, resume, GitHub, and contact.");
-  $("#content").innerHTML = `
-    <div class="grid">
-      <article class="card wide"><h2>About</h2><p>Student builder focused on AI tools, cybersecurity, web apps, automation, and useful study systems.</p></article>
-      <article class="card"><h2>Contact</h2><p>kaungkhantko.studio</p><p>GitHub: kaungkhantko26</p></article>
-      <article class="card"><h2>Skills</h2><div class="tag-row"><span class="tag">Python</span><span class="tag">Firebase</span><span class="tag">Web</span><span class="tag">AI</span><span class="tag">Linux</span></div></article>
-      <article class="card"><h2>Resume</h2><p class="muted">Add resume PDF link here.</p><button>Open resume</button></article>
-      <article class="card full"><h2>Projects</h2><ul class="list"><li>CookAI Telegram assistant</li><li>Terminal website chatbot</li><li>Kaung Study OS</li></ul></article>
-    </div>`;
+  boot("Student Resource Hub", "Realtime library resources from Supabase.", () => {
+    const fallback = [
+      ["Programming", "Python loops, data structures, and project practice", "Beginner", 45],
+      ["Cyber Security", "Networking, firewall rules, and Linux hardening", "Intermediate", 60],
+      ["AI", "Prompting, model basics, and study automation", "Beginner", 35],
+      ["English / IELTS", "Writing practice and vocabulary review", "Intermediate", 50],
+      ["Linux", "Commands, permissions, services, and logs", "Beginner", 40],
+      ["Web Development", "HTML, CSS, JavaScript, deploy workflow", "Beginner", 70],
+      ["University Assignments", "Research, outlines, citations, and presentation prep", "All levels", 30]
+    ].map(([category, description, difficulty, estimated_minutes]) => ({ title: category, category, description, difficulty, estimated_minutes }));
+    const items = cache.resources.length ? cache.resources : fallback;
+    $("#content").innerHTML = `<div class="grid">${items.map((item) => `<article class="card resource"><h2>${escapeHtml(item.title)}</h2><p>${escapeHtml(item.description)}</p><div class="tag-row"><span class="tag">${escapeHtml(item.difficulty)}</span><span class="tag">${item.estimated_minutes} min</span></div><button data-cmd="planner">Start</button></article>`).join("")}</div>`;
+    wireButtons();
+  });
 }
 
 function settings() {
-  renderShell("Settings", "Theme, language, profile, and Firebase-ready database structure.");
-  $("#content").innerHTML = `
-    <div class="grid">
-      <article class="card"><h2>Profile</h2><input value="Kaung"><input value="kaung@example.com"><button>Save profile</button></article>
-      <article class="card"><h2>Theme</h2><select><option>Kali</option><option>Matrix</option><option>Cyberpunk</option></select><select><option>English</option><option>Burmese</option></select></article>
-      <article class="card full"><h2>Firebase collections</h2><p class="muted">users, notes, tasks, studySessions, flashcards, quizzes, resources, aiChats</p><pre>{
-  users/{userId}: { name, email, level, xp, streak, preferredTheme, language },
-  notes/{noteId}: { userId, title, content, tags, pinned, createdAt, updatedAt }
-}</pre></article>
-    </div>`;
+  boot("Settings", "Profile, theme, language, and account controls.", () => {
+    $("#content").innerHTML = `
+      <div class="grid">
+        <article class="card"><h2>Profile</h2><form id="profileForm" class="form-grid"><input id="profileName" value="${escapeHtml(profile.name || "")}" placeholder="Name"><select id="language"><option value="en">English</option><option value="my">Burmese</option></select><button>Save profile</button></form></article>
+        <article class="card"><h2>Theme</h2><select id="theme"><option value="kali">Kali</option><option value="matrix">Matrix</option><option value="cyberpunk">Cyberpunk</option></select><button id="logout" class="secondary">Logout</button></article>
+        <article class="card full"><h2>Realtime database</h2><p class="muted">Connected tables: profiles, notes, tasks, study_sessions, flashcards, quizzes, resources, ai_chats.</p></article>
+      </div>`;
+    $("#profileForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      await supabase.from("profiles").update({ name: $("#profileName").value.trim(), language: $("#language").value }).eq("id", user.id);
+      toast("Profile saved");
+    });
+    $("#logout").addEventListener("click", async () => {
+      await supabase.auth.signOut();
+      window.location.href = "login.html";
+    });
+  });
+}
+
+async function loginPage() {
+  if (!supabase) {
+    $("#loginStatus").textContent = "Supabase config is missing. Add secrets and redeploy.";
+    return;
+  }
+  await initAuth();
+  if (user) window.location.href = "dashboard.html";
+  $("#loginForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const email = $("#email").value.trim();
+    const password = $("#password").value;
+    const name = $("#name").value.trim() || "Kaung";
+    const mode = event.submitter.dataset.mode;
+    $("#loginStatus").textContent = "Working...";
+    const result = mode === "signup"
+      ? await supabase.auth.signUp({ email, password, options: { data: { name } } })
+      : await supabase.auth.signInWithPassword({ email, password });
+    if (result.error) {
+      $("#loginStatus").textContent = result.error.message;
+      return;
+    }
+    session = result.data.session;
+    user = result.data.user;
+    if (!session && mode === "signup") {
+      $("#loginStatus").textContent = "Signup created. Check your email if confirmation is enabled.";
+      return;
+    }
+    await ensureProfile();
+    window.location.href = "dashboard.html";
+  });
 }
 
 function handleCommand(event) {
   event.preventDefault();
   const input = $("#command");
-  const raw = input.value.trim();
-  const command = raw.toLowerCase();
+  const command = input.value.trim().toLowerCase();
   input.value = "";
   const routes = {
     help: "dashboard.html",
@@ -396,39 +596,41 @@ function handleCommand(event) {
     planner: "planner.html",
     progress: "progress.html",
     resources: "resources.html",
-    portfolio: "portfolio.html",
+    chat: "chat.html",
     settings: "settings.html"
   };
   const key = Object.keys(routes).find((item) => command === item || command.startsWith(`${item} `));
   if (key) window.location.href = routes[key];
-  else toast("Commands: help, dashboard, notes, new note, tasks, timer, ask, quiz, flashcards, planner, progress, resources, portfolio, settings");
+  else toast("Commands: help, dashboard, notes, new note, tasks, timer, ask, quiz, flashcards, planner, progress, resources, chat, settings");
 }
 
 function wireButtons() {
-  document.querySelectorAll("[data-cmd]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const cmd = button.dataset.cmd;
-      const routes = { timer: "timer.html", planner: "planner.html", quiz: "quiz.html" };
-      window.location.href = routes[cmd] || "assistant.html";
-    });
-  });
-  document.querySelectorAll("[data-ai], [data-note-ai]").forEach((button) => {
-    button.addEventListener("click", () => toast(`${button.dataset.ai || button.dataset.noteAi} prepared for AI assistant`));
-  });
+  $$("[data-cmd]").forEach((button) => button.addEventListener("click", () => {
+    const routes = { timer: "timer.html", planner: "planner.html", quiz: "quiz.html", chat: "chat.html" };
+    window.location.href = routes[button.dataset.cmd] || "assistant.html";
+  }));
+  wireTaskChecks();
 }
 
-function initLanding() {
-  document.querySelectorAll("[data-command]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const route = button.dataset.command;
-      window.location.href = route;
-    });
-  });
+function wireQuickAi() {
+  $$("[data-quick-ai]").forEach((button) => button.addEventListener("click", async () => {
+    const box = $("#quickAsk");
+    const question = box.value.trim() || box.placeholder;
+    button.disabled = true;
+    try {
+      box.value = await askAi(question, button.dataset.quickAi);
+      await supabase.from("ai_chats").insert({ user_id: user.id, mode: button.dataset.quickAi, prompt: question, response: box.value });
+    } finally {
+      button.disabled = false;
+    }
+  }));
 }
 
-const renderers = { dashboard, notes, planner, assistant, timer: timerPage, flashcards, quiz, progress, resources, portfolio, settings };
-if ($("#app")) {
-  (renderers[page] || dashboard)();
-} else {
-  initLanding();
+function landing() {
+  $$("[data-command]").forEach((button) => button.addEventListener("click", () => window.location.href = button.dataset.command));
 }
+
+const renderers = { dashboard, notes, planner, assistant, timer: timerPage, flashcards, quiz, progress, resources, settings };
+if (page === "login") loginPage();
+else if ($("#app")) (renderers[page] || dashboard)();
+else landing();
