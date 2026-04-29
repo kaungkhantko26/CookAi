@@ -86,61 +86,6 @@ create table if not exists public.ai_chats (
   created_at timestamptz default now()
 );
 
-create or replace function public.touch_updated_at()
-returns trigger
-language plpgsql
-as $$
-begin
-  new.updated_at = now();
-  return new;
-end;
-$$;
-
-drop trigger if exists profiles_touch_updated_at on public.profiles;
-create trigger profiles_touch_updated_at
-before update on public.profiles
-for each row execute function public.touch_updated_at();
-
-drop trigger if exists notes_touch_updated_at on public.notes;
-create trigger notes_touch_updated_at
-before update on public.notes
-for each row execute function public.touch_updated_at();
-
-drop trigger if exists tasks_touch_updated_at on public.tasks;
-create trigger tasks_touch_updated_at
-before update on public.tasks
-for each row execute function public.touch_updated_at();
-
-drop trigger if exists flashcards_touch_updated_at on public.flashcards;
-create trigger flashcards_touch_updated_at
-before update on public.flashcards
-for each row execute function public.touch_updated_at();
-
-create or replace function public.handle_new_user()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  insert into public.profiles (id, email, name)
-  values (
-    new.id,
-    new.email,
-    coalesce(new.raw_user_meta_data->>'name', 'Kaung')
-  )
-  on conflict (id) do update set
-    email = excluded.email,
-    name = coalesce(public.profiles.name, excluded.name);
-  return new;
-end;
-$$;
-
-drop trigger if exists on_auth_user_created on auth.users;
-create trigger on_auth_user_created
-after insert on auth.users
-for each row execute function public.handle_new_user();
-
 alter table public.profiles enable row level security;
 alter table public.notes enable row level security;
 alter table public.tasks enable row level security;
@@ -168,22 +113,11 @@ create policy "quizzes own rows" on public.quizzes for all using (auth.uid() = u
 create policy "ai chats own rows" on public.ai_chats for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "resources readable" on public.resources for select using (true);
 
-grant usage on schema public to anon, authenticated;
-grant select on public.resources to anon, authenticated;
-grant all on public.profiles to authenticated;
-grant all on public.notes to authenticated;
-grant all on public.tasks to authenticated;
-grant all on public.study_sessions to authenticated;
-grant all on public.flashcards to authenticated;
-grant all on public.quizzes to authenticated;
-grant all on public.ai_chats to authenticated;
-
-delete from public.resources a
-using public.resources b
-where a.title = b.title
-  and a.id > b.id;
-
-create unique index if not exists resources_title_key on public.resources (title);
+do $$
+begin
+  alter table public.resources add constraint resources_title_key unique (title);
+exception when duplicate_object then null;
+end $$;
 
 insert into public.resources (title, category, description, difficulty, estimated_minutes)
 values

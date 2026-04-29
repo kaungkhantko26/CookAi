@@ -16,14 +16,7 @@ const CLIENT_ID_KEY = "mentor_client_id";
 const page = document.body.dataset.page || "dashboard";
 const cfg = window.MENTOR_SUPABASE || {};
 const supabase = window.supabase && cfg.url && cfg.anonKey
-  ? window.supabase.createClient(cfg.url, cfg.anonKey, {
-      auth: {
-        autoRefreshToken: true,
-        detectSessionInUrl: true,
-        flowType: "pkce",
-        persistSession: true
-      }
-    })
+  ? window.supabase.createClient(cfg.url, cfg.anonKey)
   : null;
 const authRedirectUrl = `${window.location.origin}${window.location.pathname.replace(/[^/]*$/, "")}auth.html`;
 
@@ -591,7 +584,7 @@ async function loginPage() {
     const email = $("#email").value.trim();
     const password = $("#password").value;
     const name = $("#name").value.trim() || "Kaung";
-    const mode = event.submitter && event.submitter.dataset.mode ? event.submitter.dataset.mode : "login";
+    const mode = event.submitter.dataset.mode;
     $("#loginStatus").textContent = "Working...";
     const result = mode === "signup"
       ? await supabase.auth.signUp({ email, password, options: { data: { name }, emailRedirectTo: authRedirectUrl } })
@@ -641,31 +634,11 @@ async function authCallbackPage() {
     return;
   }
   try {
-    const params = new URLSearchParams(window.location.search);
-    if (params.has("code")) {
-      const exchanged = await supabase.auth.exchangeCodeForSession(params.get("code"));
-      if (exchanged.error) throw exchanged.error;
-    }
     const result = await supabase.auth.getSession();
     session = result.data.session;
     user = session && session.user;
     if (!user) {
       $("#authStatus").textContent = "Auth link opened, but no session was created. Try logging in again.";
-      return;
-    }
-    if (window.location.hash.includes("type=recovery") || window.location.search.includes("type=recovery")) {
-      $("#authStatus").innerHTML = `
-        <form id="passwordUpdateForm" class="form-grid">
-          <label class="full" for="newPassword">New password</label>
-          <input id="newPassword" class="full" type="password" minlength="6" required>
-          <button class="full">Update password</button>
-        </form>`;
-      $("#passwordUpdateForm").addEventListener("submit", async (event) => {
-        event.preventDefault();
-        const updated = await supabase.auth.updateUser({ password: $("#newPassword").value });
-        $("#authStatus").textContent = updated.error ? authErrorMessage(updated.error) : "Password updated. Opening dashboard...";
-        if (!updated.error) window.location.href = "dashboard.html";
-      });
       return;
     }
     await ensureProfile();
