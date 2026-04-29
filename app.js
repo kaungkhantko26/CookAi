@@ -15,7 +15,7 @@ const API_URL = "https://bot.kaungkhantko.top/api/chat";
 const CLIENT_ID_KEY = "mentor_client_id";
 const page = document.body.dataset.page || "dashboard";
 const cfg = window.MENTOR_SUPABASE || {};
-const supabase = window.supabase && cfg.url && cfg.anonKey
+const supabaseClient = window.supabase && cfg.url && cfg.anonKey
   ? window.supabase.createClient(cfg.url, cfg.anonKey, {
       auth: {
         autoRefreshToken: true,
@@ -88,11 +88,11 @@ function requireSupabaseMessage() {
 }
 
 async function initAuth() {
-  if (!supabase) return;
-  const result = await supabase.auth.getSession();
+  if (!supabaseClient) return;
+  const result = await supabaseClient.auth.getSession();
   session = result.data.session;
   user = session && session.user;
-  supabase.auth.onAuthStateChange((_event, nextSession) => {
+  supabaseClient.auth.onAuthStateChange((_event, nextSession) => {
     session = nextSession;
     user = nextSession && nextSession.user;
     if (!user && page !== "login" && $("#app")) window.location.href = "login.html";
@@ -112,30 +112,30 @@ function authErrorMessage(error) {
 }
 
 async function ensureProfile() {
-  if (!supabase || !user) return null;
-  const existing = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
+  if (!supabaseClient || !user) return null;
+  const existing = await supabaseClient.from("profiles").select("*").eq("id", user.id).maybeSingle();
   if (existing.error) throw existing.error;
   if (existing.data) {
     profile = existing.data;
     return profile;
   }
   const name = user.user_metadata && user.user_metadata.name ? user.user_metadata.name : "Kaung";
-  const inserted = await supabase.from("profiles").insert({ id: user.id, email: user.email, name }).select().single();
+  const inserted = await supabaseClient.from("profiles").insert({ id: user.id, email: user.email, name }).select().single();
   if (inserted.error) throw inserted.error;
   profile = inserted.data;
   return profile;
 }
 
 async function fetchAll() {
-  if (!supabase || !user) return cache;
+  if (!supabaseClient || !user) return cache;
   const [notes, tasks, sessionsResult, cards, quizzes, resources, chats] = await Promise.all([
-    supabase.from("notes").select("*").eq("user_id", user.id).order("pinned", { ascending: false }).order("updated_at", { ascending: false }),
-    supabase.from("tasks").select("*").eq("user_id", user.id).order("due_date", { ascending: true }),
-    supabase.from("study_sessions").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
-    supabase.from("flashcards").select("*").eq("user_id", user.id).order("updated_at", { ascending: false }),
-    supabase.from("quizzes").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
-    supabase.from("resources").select("*").order("category", { ascending: true }),
-    supabase.from("ai_chats").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(20)
+    supabaseClient.from("notes").select("*").eq("user_id", user.id).order("pinned", { ascending: false }).order("updated_at", { ascending: false }),
+    supabaseClient.from("tasks").select("*").eq("user_id", user.id).order("due_date", { ascending: true }),
+    supabaseClient.from("study_sessions").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
+    supabaseClient.from("flashcards").select("*").eq("user_id", user.id).order("updated_at", { ascending: false }),
+    supabaseClient.from("quizzes").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
+    supabaseClient.from("resources").select("*").order("category", { ascending: true }),
+    supabaseClient.from("ai_chats").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(20)
   ]);
   for (const result of [notes, tasks, sessionsResult, cards, quizzes, resources, chats]) {
     if (result.error) throw result.error;
@@ -153,8 +153,8 @@ async function fetchAll() {
 }
 
 function subscribeRealtime(onChange) {
-  if (!supabase || !user || channel) return;
-  channel = supabase.channel(`mentor-user-${user.id}`)
+  if (!supabaseClient || !user || channel) return;
+  channel = supabaseClient.channel(`mentor-user-${user.id}`)
     .on("postgres_changes", { event: "*", schema: "public", table: "notes", filter: `user_id=eq.${user.id}` }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "tasks", filter: `user_id=eq.${user.id}` }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "study_sessions", filter: `user_id=eq.${user.id}` }, onChange)
@@ -186,7 +186,7 @@ function renderShell(title, subtitle) {
         <h1>${title}</h1>
         <p>${subtitle}</p>
       </section>
-      <section id="content">${supabase ? '<article class="card full"><p class="muted">Loading realtime data...</p></article>' : requireSupabaseMessage()}</section>
+      <section id="content">${supabaseClient ? '<article class="card full"><p class="muted">Loading realtime data...</p></article>' : requireSupabaseMessage()}</section>
     </main>
     <form id="commandForm" class="command-bar" autocomplete="off">
       <label class="prompt" for="command">root@mentor:~#</label>
@@ -200,7 +200,7 @@ function renderShell(title, subtitle) {
 
 async function boot(title, subtitle, render) {
   renderShell(title, subtitle);
-  if (!supabase) return;
+  if (!supabaseClient) return;
   try {
     await initAuth();
     if (!user) {
@@ -316,12 +316,12 @@ function notes() {
         pinned: $("#notePinned").checked
       };
       if (editingNoteId) {
-        await supabase.from("notes").update(payload).eq("id", editingNoteId).eq("user_id", user.id);
+        await supabaseClient.from("notes").update(payload).eq("id", editingNoteId).eq("user_id", user.id);
         editingNoteId = null;
         $("#noteSubmit").textContent = "Create note";
         $("#cancelEdit").classList.add("hidden");
       } else {
-        await supabase.from("notes").insert({ ...payload, user_id: user.id });
+        await supabaseClient.from("notes").insert({ ...payload, user_id: user.id });
       }
       event.target.reset();
       toast("Note saved");
@@ -339,12 +339,12 @@ function notes() {
 
 function wireNoteButtons() {
   $$("[data-delete-note]").forEach((button) => button.addEventListener("click", async () => {
-    await supabase.from("notes").delete().eq("id", button.dataset.deleteNote).eq("user_id", user.id);
+    await supabaseClient.from("notes").delete().eq("id", button.dataset.deleteNote).eq("user_id", user.id);
     toast("Note deleted");
   }));
   $$("[data-pin-note]").forEach((button) => button.addEventListener("click", async () => {
     const note = cache.notes.find((item) => item.id === button.dataset.pinNote);
-    await supabase.from("notes").update({ pinned: !note.pinned }).eq("id", note.id).eq("user_id", user.id);
+    await supabaseClient.from("notes").update({ pinned: !note.pinned }).eq("id", note.id).eq("user_id", user.id);
   }));
   $$("[data-edit-note]").forEach((button) => button.addEventListener("click", () => {
     const note = cache.notes.find((item) => item.id === button.dataset.editNote);
@@ -361,7 +361,7 @@ function wireNoteButtons() {
   $$("[data-note-ai]").forEach((button) => button.addEventListener("click", async () => {
     const note = cache.notes.find((item) => item.id === button.dataset.note);
     const reply = await askAi(`${note.title}\n${note.content}`, button.dataset.noteAi);
-    await supabase.from("ai_chats").insert({ user_id: user.id, mode: button.dataset.noteAi, prompt: note.title, response: reply });
+    await supabaseClient.from("ai_chats").insert({ user_id: user.id, mode: button.dataset.noteAi, prompt: note.title, response: reply });
     toast("AI result saved in Assistant history");
   }));
 }
@@ -384,7 +384,7 @@ function planner() {
       </div>`;
     $("#taskForm").addEventListener("submit", async (event) => {
       event.preventDefault();
-      await supabase.from("tasks").insert({ user_id: user.id, title: $("#taskTitle").value.trim(), subject: $("#taskSubject").value.trim(), priority: $("#taskPriority").value, due_date: $("#taskDue").value || null });
+      await supabaseClient.from("tasks").insert({ user_id: user.id, title: $("#taskTitle").value.trim(), subject: $("#taskSubject").value.trim(), priority: $("#taskPriority").value, due_date: $("#taskDue").value || null });
       event.target.reset();
     });
     wireTaskChecks();
@@ -400,7 +400,7 @@ function nextExamText() {
 
 function wireTaskChecks() {
   $$("[data-task-done]").forEach((box) => box.addEventListener("change", async () => {
-    await supabase.from("tasks").update({ done: box.checked }).eq("id", box.dataset.taskDone).eq("user_id", user.id);
+    await supabaseClient.from("tasks").update({ done: box.checked }).eq("id", box.dataset.taskDone).eq("user_id", user.id);
   }));
 }
 
@@ -421,7 +421,7 @@ function assistant() {
       $("#assistantOutput").textContent = "Running AI assistant...";
       const reply = await askAi(prompt, mode);
       $("#assistantOutput").textContent = reply;
-      await supabase.from("ai_chats").insert({ user_id: user.id, mode, prompt, response: reply });
+      await supabaseClient.from("ai_chats").insert({ user_id: user.id, mode, prompt, response: reply });
     });
     wireButtons();
   });
@@ -457,7 +457,7 @@ function timerPage() {
         draw();
         if (remaining <= 0) {
           clearInterval(interval);
-          await supabase.from("study_sessions").insert({ user_id: user.id, minutes: Math.round(seconds / 60), session_date: todayIso(), kind: seconds >= 1500 ? "focus" : "break" });
+          await supabaseClient.from("study_sessions").insert({ user_id: user.id, minutes: Math.round(seconds / 60), session_date: todayIso(), kind: seconds >= 1500 ? "focus" : "break" });
           toast(`Great work! +${seconds >= 1500 ? 20 : 5} XP. Focus time saved.`);
         }
       }, 1000);
@@ -477,17 +477,17 @@ function flashcards() {
       </div>`;
     $("#cardForm").addEventListener("submit", async (event) => {
       event.preventDefault();
-      await supabase.from("flashcards").insert({ user_id: user.id, question: $("#cardQ").value.trim(), answer: $("#cardA").value.trim(), known: false });
+      await supabaseClient.from("flashcards").insert({ user_id: user.id, question: $("#cardQ").value.trim(), answer: $("#cardA").value.trim(), known: false });
       event.target.reset();
     });
     $("#aiCards").addEventListener("click", async () => {
       const reply = await askAi("Make 5 flashcards for Python loops. Format as Q: ... A: ...", "Flashcard Mode");
-      await supabase.from("ai_chats").insert({ user_id: user.id, mode: "Flashcard Mode", prompt: "Python loops flashcards", response: reply });
+      await supabaseClient.from("ai_chats").insert({ user_id: user.id, mode: "Flashcard Mode", prompt: "Python loops flashcards", response: reply });
       toast("AI flashcards saved in Assistant history");
     });
     $$("[data-card-known], [data-card-unknown]").forEach((button) => button.addEventListener("click", async () => {
       const id = button.dataset.cardKnown || button.dataset.cardUnknown;
-      await supabase.from("flashcards").update({ known: Boolean(button.dataset.cardKnown), next_review_at: new Date(Date.now() + 86400000).toISOString() }).eq("id", id).eq("user_id", user.id);
+      await supabaseClient.from("flashcards").update({ known: Boolean(button.dataset.cardKnown), next_review_at: new Date(Date.now() + 86400000).toISOString() }).eq("id", id).eq("user_id", user.id);
     }));
   });
 }
@@ -505,10 +505,10 @@ function quiz() {
       const topic = $("#quizTopic").value.trim() || "Networking";
       const reply = await askAi(`Create a mixed quiz for ${topic}`, "Quiz Mode");
       $("#quizPreview").innerHTML = `<li>${escapeHtml(reply)}</li>`;
-      await supabase.from("ai_chats").insert({ user_id: user.id, mode: "Quiz Mode", prompt: topic, response: reply });
+      await supabaseClient.from("ai_chats").insert({ user_id: user.id, mode: "Quiz Mode", prompt: topic, response: reply });
     });
     $("#saveScore").addEventListener("click", async () => {
-      await supabase.from("quizzes").insert({ user_id: user.id, topic: $("#quizTopic").value.trim() || "Networking", score: 80, total_questions: 10, weak_topic: "Firewall rules", suggested_review: "Network Security" });
+      await supabaseClient.from("quizzes").insert({ user_id: user.id, topic: $("#quizTopic").value.trim() || "Networking", score: 80, total_questions: 10, weak_topic: "Firewall rules", suggested_review: "Network Security" });
       toast("Quiz score saved");
     });
   });
@@ -565,18 +565,18 @@ function settings() {
       </div>`;
     $("#profileForm").addEventListener("submit", async (event) => {
       event.preventDefault();
-      await supabase.from("profiles").update({ name: $("#profileName").value.trim(), language: $("#language").value }).eq("id", user.id);
+      await supabaseClient.from("profiles").update({ name: $("#profileName").value.trim(), language: $("#language").value }).eq("id", user.id);
       toast("Profile saved");
     });
     $("#logout").addEventListener("click", async () => {
-      await supabase.auth.signOut();
+      await supabaseClient.auth.signOut();
       window.location.href = "login.html";
     });
   });
 }
 
 async function loginPage() {
-  if (!supabase) {
+  if (!supabaseClient) {
     $("#loginStatus").textContent = "Supabase config is missing. Add secrets and redeploy.";
     return;
   }
@@ -594,8 +594,8 @@ async function loginPage() {
     const mode = event.submitter && event.submitter.dataset.mode ? event.submitter.dataset.mode : "login";
     $("#loginStatus").textContent = "Working...";
     const result = mode === "signup"
-      ? await supabase.auth.signUp({ email, password, options: { data: { name }, emailRedirectTo: authRedirectUrl } })
-      : await supabase.auth.signInWithPassword({ email, password });
+      ? await supabaseClient.auth.signUp({ email, password, options: { data: { name }, emailRedirectTo: authRedirectUrl } })
+      : await supabaseClient.auth.signInWithPassword({ email, password });
     if (result.error) {
       $("#loginStatus").textContent = authErrorMessage(result.error);
       return;
@@ -617,7 +617,7 @@ async function loginPage() {
         $("#loginStatus").textContent = "Enter your email first.";
         return;
       }
-      const result = await supabase.auth.resend({ type: "signup", email, options: { emailRedirectTo: authRedirectUrl } });
+      const result = await supabaseClient.auth.resend({ type: "signup", email, options: { emailRedirectTo: authRedirectUrl } });
       $("#loginStatus").textContent = result.error ? authErrorMessage(result.error) : "Confirmation email sent. Check your inbox.";
     });
   }
@@ -629,24 +629,24 @@ async function loginPage() {
         $("#loginStatus").textContent = "Enter your email first.";
         return;
       }
-      const result = await supabase.auth.resetPasswordForEmail(email, { redirectTo: authRedirectUrl });
+      const result = await supabaseClient.auth.resetPasswordForEmail(email, { redirectTo: authRedirectUrl });
       $("#loginStatus").textContent = result.error ? authErrorMessage(result.error) : "Password reset email sent.";
     });
   }
 }
 
 async function authCallbackPage() {
-  if (!supabase) {
+  if (!supabaseClient) {
     $("#authStatus").textContent = "Supabase config is missing.";
     return;
   }
   try {
     const params = new URLSearchParams(window.location.search);
     if (params.has("code")) {
-      const exchanged = await supabase.auth.exchangeCodeForSession(params.get("code"));
+      const exchanged = await supabaseClient.auth.exchangeCodeForSession(params.get("code"));
       if (exchanged.error) throw exchanged.error;
     }
-    const result = await supabase.auth.getSession();
+    const result = await supabaseClient.auth.getSession();
     session = result.data.session;
     user = session && session.user;
     if (!user) {
@@ -662,7 +662,7 @@ async function authCallbackPage() {
         </form>`;
       $("#passwordUpdateForm").addEventListener("submit", async (event) => {
         event.preventDefault();
-        const updated = await supabase.auth.updateUser({ password: $("#newPassword").value });
+        const updated = await supabaseClient.auth.updateUser({ password: $("#newPassword").value });
         $("#authStatus").textContent = updated.error ? authErrorMessage(updated.error) : "Password updated. Opening dashboard...";
         if (!updated.error) window.location.href = "dashboard.html";
       });
@@ -717,7 +717,7 @@ function wireQuickAi() {
     button.disabled = true;
     try {
       box.value = await askAi(question, button.dataset.quickAi);
-      await supabase.from("ai_chats").insert({ user_id: user.id, mode: button.dataset.quickAi, prompt: question, response: box.value });
+      await supabaseClient.from("ai_chats").insert({ user_id: user.id, mode: button.dataset.quickAi, prompt: question, response: box.value });
     } finally {
       button.disabled = false;
     }
