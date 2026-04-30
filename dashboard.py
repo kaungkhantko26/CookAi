@@ -78,6 +78,8 @@ LANGUAGE_ALIASES = {
     "mandarin": "Chinese",
 }
 web_language_preferences: dict[int, str] = {}
+WEB_ACTIVITY_LIMIT = 500
+ADMIN_SESSION_LIMIT = 300
 
 
 def require_login() -> bool:
@@ -128,6 +130,115 @@ def set_web_language(user_id: int, language: str) -> str:
     web_language_preferences[user_id] = normalized
     session["web_language"] = normalized
     return normalized
+
+
+def get_request_ip() -> str:
+    forwarded_for = str(request.headers.get("X-Forwarded-For") or "").strip()
+    if forwarded_for:
+        return forwarded_for.split(",", 1)[0].strip()
+    return str(request.remote_addr or "").strip()
+
+
+def get_request_meta() -> dict[str, str]:
+    return {
+        "ip": get_request_ip(),
+        "user_agent": bot.clip_text(str(request.headers.get("User-Agent") or "").strip(), 240),
+        "origin": bot.clip_text(str(request.headers.get("Origin") or "").strip(), 160),
+        "referrer": bot.clip_text(str(request.headers.get("Referer") or "").strip(), 240),
+        "path": bot.clip_text(str(request.path or "").strip(), 120),
+    }
+
+
+def get_client_label(client_key: str) -> str:
+    normalized_key = bot.normalize_plain_text(client_key).strip()
+    if not normalized_key:
+        return "session"
+    digest = hashlib.sha256(normalized_key.encode("utf-8")).hexdigest()
+    return digest[:12]
+
+
+def record_web_visit(user_id: int, client_key: str = "") -> None:
+    bot.refresh_auth_related_state()
+    existing = bot.web_user_profiles.get(user_id, {})
+    now = bot.now_local().isoformat()
+    meta = get_request_meta()
+    bot.web_user_profiles[user_id] = {
+        **existing,
+        "client": existing.get("client") or get_client_label(client_key),
+        "first_seen": existing.get("first_seen") or now,
+        "last_seen": now,
+        "last_ip": meta["ip"],
+        "last_user_agent": meta["user_agent"],
+        "last_origin": meta["origin"],
+        "last_referrer": meta["referrer"],
+        "visit_count": int(existing.get("visit_count") or 0) + 1,
+    }
+    bot.save_auth_related_state()
+
+
+def record_web_chat_event(
+    user_id: int,
+    client_key: str,
+    message: str,
+    requested_language: str,
+    reply: str,
+    ok: bool,
+    error: str = "",
+) -> None:
+    bot.refresh_auth_related_state()
+    existing = bot.web_user_profiles.get(user_id, {})
+    now = bot.now_local().isoformat()
+    meta = get_request_meta()
+    normalized_message = bot.normalize_plain_text(message).strip()
+    normalized_language = normalize_web_language(requested_language or get_web_language(user_id))
+    bot.web_user_profiles[user_id] = {
+        **existing,
+        "client": existing.get("client") or get_client_label(client_key),
+        "first_seen": existing.get("first_seen") or now,
+        "last_seen": now,
+        "last_ip": meta["ip"],
+        "last_user_agent": meta["user_agent"],
+        "last_origin": meta["origin"],
+        "last_referrer": meta["referrer"],
+        "last_language": normalized_language,
+        "last_request": bot.clip_text(normalized_message, 700),
+        "message_count": int(existing.get("message_count") or 0) + (1 if normalized_message else 0),
+        "visit_count": int(existing.get("visit_count") or 0),
+    }
+    bot.web_activity_log.append(
+        {
+            "id": bot.new_item_id(),
+            "user_id": user_id,
+            "client": get_client_label(client_key),
+            "message": bot.clip_text(normalized_message, 1200),
+            "reply": bot.clip_text(reply, 1200),
+            "ok": ok,
+            "error": bot.clip_text(error, 500),
+            "language": normalized_language,
+            "created_at": now,
+            **meta,
+        }
+    )
+    if len(bot.web_activity_log) > WEB_ACTIVITY_LIMIT:
+        del bot.web_activity_log[:-WEB_ACTIVITY_LIMIT]
+    bot.save_auth_related_state()
+
+
+def record_admin_session_event(action: str, ok: bool = True, reason: str = "") -> None:
+    bot.refresh_auth_related_state()
+    bot.admin_session_log.append(
+        {
+            "id": bot.new_item_id(),
+            "action": action,
+            "ok": ok,
+            "reason": bot.clip_text(reason, 240),
+            "created_at": bot.now_local().isoformat(),
+            **get_request_meta(),
+        }
+    )
+    if len(bot.admin_session_log) > ADMIN_SESSION_LIMIT:
+        del bot.admin_session_log[:-ADMIN_SESSION_LIMIT]
+    bot.save_auth_related_state()
 
 
 def get_language_system_prompt(language: str) -> str:
@@ -341,6 +452,74 @@ def dashboard_activity_rows() -> list[dict[str, Any]]:
     return rows
 
 
+def dashboard_web_user_rows() -> list[dict[str, Any]]:
+    bot.refresh_auth_related_state()
+    rows: list[dict[str, Any]] = []
+    sorted_profiles = sorted(
+        bot.web_user_profiles.items(),
+        key=lambda item: str(item[1].get("last_seen") or ""),
+        reverse=True,
+    )
+    for user_id, profile in sorted_profiles[:80]:
+        first_seen = str(profile.get("first_seen") or "").strip()
+        last_seen = str(profile.get("last_seen") or "").strip()
+        rows.append(
+            {
+                "user_id": user_id,
+                "client": str(profile.get("client") or "session"),
+                "first_seen": bot.format_local_datetime(first_seen) if first_seen else "",
+                "last_seen": bot.format_local_datetime(last_seen) if last_seen else "",
+                "last_ip": str(profile.get("last_ip") or ""),
+                "last_user_agent": str(profile.get("last_user_agent") or ""),
+                "last_language": str(profile.get("last_language") or ""),
+                "last_request": str(profile.get("last_request") or ""),
+                "message_count": int(profile.get("message_count") or 0),
+                "visit_count": int(profile.get("visit_count") or 0),
+            }
+        )
+    return rows
+
+
+def dashboard_web_activity_rows() -> list[dict[str, Any]]:
+    bot.refresh_auth_related_state()
+    rows: list[dict[str, Any]] = []
+    for item in reversed(bot.web_activity_log[-120:]):
+        created_at = str(item.get("created_at") or "").strip()
+        rows.append(
+            {
+                "user_id": item.get("user_id"),
+                "client": str(item.get("client") or "session"),
+                "message": str(item.get("message") or ""),
+                "reply": str(item.get("reply") or ""),
+                "ok": bool(item.get("ok", True)),
+                "error": str(item.get("error") or ""),
+                "language": str(item.get("language") or ""),
+                "ip": str(item.get("ip") or ""),
+                "user_agent": str(item.get("user_agent") or ""),
+                "created_at": bot.format_local_datetime(created_at) if created_at else "",
+            }
+        )
+    return rows
+
+
+def dashboard_admin_session_rows() -> list[dict[str, Any]]:
+    bot.refresh_auth_related_state()
+    rows: list[dict[str, Any]] = []
+    for item in reversed(bot.admin_session_log[-100:]):
+        created_at = str(item.get("created_at") or "").strip()
+        rows.append(
+            {
+                "action": str(item.get("action") or ""),
+                "ok": bool(item.get("ok", True)),
+                "reason": str(item.get("reason") or ""),
+                "ip": str(item.get("ip") or ""),
+                "user_agent": str(item.get("user_agent") or ""),
+                "created_at": bot.format_local_datetime(created_at) if created_at else "",
+            }
+        )
+    return rows
+
+
 @app.get("/login")
 def login() -> str:
     if is_logged_in():
@@ -353,13 +532,17 @@ def login_post() -> Any:
     password = str(request.form.get("password") or "")
     if hmac.compare_digest(password, bot.ADMIN_DASHBOARD_PASSWORD):
         session["admin_logged_in"] = True
+        record_admin_session_event("login", ok=True)
         return redirect(url_for("index"))
+    record_admin_session_event("login", ok=False, reason="invalid password")
     flash("Invalid password.", "error")
     return redirect(url_for("login"))
 
 
 @app.post("/logout")
 def logout() -> Any:
+    if is_logged_in():
+        record_admin_session_event("logout", ok=True)
     session.clear()
     return redirect(url_for("login"))
 
@@ -378,15 +561,20 @@ def index() -> str:
         "dashboard.html",
         users=dashboard_user_rows(),
         activity=dashboard_activity_rows(),
+        web_users=dashboard_web_user_rows(),
+        web_activity=dashboard_web_activity_rows(),
+        admin_sessions=dashboard_admin_session_rows(),
         pending_count=pending_count,
         approved_count=len(bot.approved_user_ids - bot.TELEGRAM_ADMIN_USER_IDS),
         blocked_count=len(bot.blocked_user_ids),
+        web_user_count=len(bot.web_user_profiles),
     )
 
 
 @app.get("/bot")
 @app.get("/terminal")
 def web_terminal() -> str:
+    record_web_visit(get_web_user_id())
     return render_template("terminal.html")
 
 
@@ -411,11 +599,30 @@ def web_chat() -> Any:
     except requests.HTTPError as exc:
         app.logger.exception("HTTP error while processing website chat")
         error_body = exc.response.text[:500] if exc.response is not None else str(exc)
+        record_web_chat_event(
+            user_id,
+            client_key,
+            message,
+            requested_language,
+            f"API error:\n{error_body}",
+            ok=False,
+            error=error_body,
+        )
         return jsonify({"ok": False, "reply": f"API error:\n{error_body}"}), 502
     except Exception as exc:
         app.logger.exception("Website chat failed")
+        record_web_chat_event(
+            user_id,
+            client_key,
+            message,
+            requested_language,
+            f"Error: {exc}",
+            ok=False,
+            error=str(exc),
+        )
         return jsonify({"ok": False, "reply": f"Error: {exc}"}), 500
 
+    record_web_chat_event(user_id, client_key, message, requested_language, answer, ok=True)
     return jsonify({"ok": True, "reply": answer})
 
 
