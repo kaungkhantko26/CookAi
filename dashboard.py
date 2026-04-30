@@ -59,6 +59,7 @@ PUBLIC_ENDPOINTS = {
     "web_chat",
     "web_health",
     "honeypot",
+    "not_found_page",
 }
 HONEYPOT_PREFIXES = (
     "/admin",
@@ -470,6 +471,8 @@ def process_web_chat_message(user_id: int, raw_text: str, requested_language: st
 def enforce_login() -> Any:
     if is_honeypot_path(request.path):
         return None
+    if request.endpoint is None:
+        return None
     if is_rate_limited(request.endpoint, get_request_ip()):
         return jsonify({"ok": False, "reply": "Too many requests. Try again later."}), 429
     if require_login():
@@ -649,6 +652,16 @@ def web_terminal() -> str:
 @app.get("/health")
 def web_health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/404")
+def not_found_page() -> tuple[str, int]:
+    return render_template("404.html"), 404
+
+
+@app.errorhandler(404)
+def handle_not_found(_: Exception) -> tuple[str, int]:
+    return render_template("404.html"), 404
 
 
 @app.get("/admin")

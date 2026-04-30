@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'self'; frame-ancestors 'none'">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+    <title>404 - Not Found</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #050807;
+        --panel: #07110d;
+        --line: #123326;
+        --text: #d7ffe9;
+        --muted: #71a889;
+        --green: #00ff88;
+        --green-soft: rgba(0, 255, 136, 0.14);
+        --red: #ff5f56;
+        --yellow: #ffbd2e;
+      }
+      * { box-sizing: border-box; }
+      html, body { min-height: 100%; }
+      body {
+        margin: 0;
+        min-height: 100svh;
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+        background:
+          linear-gradient(rgba(255,255,255,0.025) 50%, rgba(0,0,0,0.08) 50%),
+          radial-gradient(circle at 50% 32%, var(--green-soft), transparent 18rem),
+          var(--bg);
+        background-size: 100% 4px, auto, auto;
+        color: var(--text);
+        font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", Consolas, monospace;
+        letter-spacing: 0;
+        padding: 24px;
+      }
+      .terminal {
+        width: min(100%, 720px);
+        border: 1px solid var(--line);
+        background: #07110d;
+        box-shadow: 0 22px 80px rgba(0,0,0,0.36), 0 0 36px var(--green-soft);
+      }
+      .bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 42px;
+        padding: 0 14px;
+        border-bottom: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--red);
+        box-shadow: 18px 0 0 var(--yellow), 36px 0 0 var(--green);
+      }
+      .title { margin-left: 44px; }
+      .body { padding: clamp(24px, 6vw, 44px); }
+      .code {
+        color: var(--green);
+        font-size: clamp(3rem, 14vw, 7rem);
+        line-height: 0.9;
+        margin: 0 0 20px;
+        text-shadow: 0 0 18px var(--green-soft);
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: clamp(1.25rem, 4vw, 2rem);
+        line-height: 1.2;
+      }
+      p {
+        margin: 0;
+        color: var(--muted);
+        font-size: clamp(0.92rem, 2.3vw, 1rem);
+        line-height: 1.7;
+      }
+      a {
+        display: inline-flex;
+        margin-top: 26px;
+        color: #001b0e;
+        background: var(--green);
+        text-decoration: none;
+        padding: 12px 16px;
+        border: 1px solid var(--green);
+        font-weight: 700;
+      }
+      a:focus-visible {
+        outline: 3px solid var(--yellow);
+        outline-offset: 3px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="terminal" aria-label="Page not found">
+      <div class="bar">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="title">MENTOR / secure-not-found</span>
+      </div>
+      <section class="body">
+        <p class="code">404</p>
+        <h1>Page not found</h1>
+        <p>The requested page is not available. No server details or directory information are exposed.</p>
+        <a href="/">Return to terminal</a>
+      </section>
+    </main>
+  </body>
+</html>
