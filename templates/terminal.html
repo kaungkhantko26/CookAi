@@ -497,7 +497,6 @@
       const send = document.querySelector("#send");
       const theme = document.querySelector("#theme");
       const language = document.querySelector("#language");
-      const promptHtml = '<span class="host">root@mentor</span>:<span class="path">~/terminal</span><span class="prompt">#</span>';
       const history = [];
       let historyIndex = 0;
       const THEME_KEY = "cookai_terminal_theme";
@@ -511,7 +510,7 @@
         try {
           const saved = JSON.parse(localStorage.getItem(CHAT_LOG_KEY) || "[]");
           if (!Array.isArray(saved)) return [];
-          return saved.filter((item) => item && typeof item.className === "string" && typeof item.html === "string");
+          return saved.filter((item) => item && typeof item.className === "string" && typeof item.text === "string");
         } catch {
           return [];
         }
@@ -521,38 +520,51 @@
         localStorage.setItem(CHAT_LOG_KEY, JSON.stringify(lines.slice(-CHAT_LOG_LIMIT)));
       }
 
-      function saveChatLine(className, html) {
+      function saveChatLine(className, text) {
         if (className === "system") return;
         const lines = readChatLog();
-        lines.push({ className, html, createdAt: Date.now() });
+        lines.push({ className, text, createdAt: Date.now() });
         writeChatLog(lines);
       }
 
-      function appendLine(className, html, persist = false) {
+      function appendLine(className, text, persist = false) {
         const line = document.createElement("div");
         line.className = `line ${className}`;
-        line.innerHTML = html;
+        line.textContent = text;
         screen.appendChild(line);
         screen.scrollTop = screen.scrollHeight;
-        if (persist) saveChatLine(className, html);
+        if (persist) saveChatLine(className, text);
+      }
+
+      function appendUserLine(command) {
+        const line = document.createElement("div");
+        line.className = "line user";
+
+        const host = document.createElement("span");
+        host.className = "host";
+        host.textContent = "root@mentor";
+
+        const path = document.createElement("span");
+        path.className = "path";
+        path.textContent = "~/terminal";
+
+        const prompt = document.createElement("span");
+        prompt.className = "prompt";
+        prompt.textContent = "#";
+
+        line.append(host, ":", path, prompt, ` ${command}`);
+        screen.appendChild(line);
+        screen.scrollTop = screen.scrollHeight;
+        saveChatLine("user", `root@mentor:~/terminal# ${command}`);
       }
 
       function restoreChatLog() {
         const lines = readChatLog();
         if (!lines.length) return;
         for (const item of lines) {
-          appendLine(item.className, item.html);
+          appendLine(item.className, item.text);
         }
         appendLine("system", `restored ${lines.length} local chat lines`);
-      }
-
-      function escapeHtml(value) {
-        return value
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;")
-          .replace(/'/g, "&#039;");
       }
 
       function setBusy(isBusy) {
@@ -591,7 +603,7 @@
 
       async function sendCommand(command) {
         if (command === "/clear") {
-          screen.innerHTML = "";
+          screen.textContent = "";
           localStorage.removeItem(CHAT_LOG_KEY);
           appendLine("system", "local chat history cleared");
           return;
@@ -625,9 +637,9 @@
           });
           const payload = await response.json();
           const className = payload.ok ? "assistant" : "error";
-          appendLine(className, escapeHtml(payload.reply || "Empty response."), true);
+          appendLine(className, payload.reply || "Empty response.", true);
         } catch (error) {
-          appendLine("error", `network error: ${escapeHtml(String(error))}`, true);
+          appendLine("error", `network error: ${String(error)}`, true);
         } finally {
           setBusy(false);
           input.focus();
@@ -638,7 +650,7 @@
         event.preventDefault();
         const command = input.value.trim();
         if (!command) return;
-        appendLine("user", `${promptHtml} ${escapeHtml(command)}`, true);
+        appendUserLine(command);
         history.push(command);
         historyIndex = history.length;
         input.value = "";

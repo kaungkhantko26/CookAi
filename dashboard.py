@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
+import os
 import secrets
 import time
 from typing import Any
@@ -23,21 +25,35 @@ app.secret_key = bot.ADMIN_DASHBOARD_SECRET
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = True
+app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
 
 PUBLIC_WEB_ORIGINS = {
-    "https://kaungkhantko.studio",
-    "https://www.kaungkhantko.studio",
+    origin.strip().rstrip("/")
+    for origin in os.getenv(
+        "PUBLIC_WEB_ORIGINS",
+        (
+            "https://kaungkhantko.studio,"
+            "https://www.kaungkhantko.studio,"
+            "http://127.0.0.1:5060,"
+            "http://localhost:5060"
+        ),
+    ).split(",")
+    if origin.strip()
 }
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "X-XSS-Protection": "1; mode=block",
+    "X-Permitted-Cross-Domain-Policies": "none",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Resource-Policy": "same-origin",
     "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
     "Content-Security-Policy": (
-        "default-src 'self' https: data:; "
-        "script-src 'self' 'unsafe-inline' https:; "
-        "style-src 'self' 'unsafe-inline' https:; "
-        "connect-src 'self' https://bot.kaungkhantko.top https://kaungkhantko.studio https://www.kaungkhantko.studio; "
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
         "frame-ancestors 'none'; "
         "base-uri 'self'; "
         "form-action 'self'"
@@ -111,12 +127,44 @@ ADMIN_SESSION_LIMIT = 300
 RATE_LIMIT_BUCKETS: dict[str, list[float]] = {}
 RATE_LIMIT_RULES = {
     "login_post": (8, 300),
-    "web_chat": (40, 60),
+    "web_chat": (18, 60),
 }
+WEB_CHAT_MAX_BYTES = int(os.getenv("WEB_CHAT_MAX_BYTES", "8192").strip())
+WEB_CHAT_MAX_MESSAGE_CHARS = int(os.getenv("WEB_CHAT_MAX_MESSAGE_CHARS", "2000").strip())
+WEB_CHAT_MAX_CLIENT_ID_CHARS = int(os.getenv("WEB_CHAT_MAX_CLIENT_ID_CHARS", "100").strip())
+WEB_CHAT_MAX_LANGUAGE_CHARS = 60
+CSRF_TOKEN_BYTES = 32
 
 
 def require_login() -> bool:
     return request.endpoint in PUBLIC_ENDPOINTS or is_logged_in()
+
+
+def get_or_create_session_token(key: str) -> str:
+    token = session.get(key)
+    if isinstance(token, str) and len(token) >= 32:
+        return token
+    token = secrets.token_urlsafe(CSRF_TOKEN_BYTES)
+    session[key] = token
+    return token
+
+
+def get_csrf_token() -> str:
+    return get_or_create_session_token("csrf_token")
+
+
+def is_valid_session_token(key: str, submitted_token: str) -> bool:
+    expected_token = session.get(key)
+    return (
+        isinstance(expected_token, str)
+        and bool(submitted_token)
+        and hmac.compare_digest(submitted_token, expected_token)
+    )
+
+
+@app.context_processor
+def inject_security_tokens() -> dict[str, str]:
+    return {"csrf_token": get_csrf_token()}
 
 
 def is_honeypot_path(path: str) -> bool:
@@ -131,8 +179,11 @@ def is_honeypot_path(path: str) -> bool:
 def add_response_headers(response: Any) -> Any:
     for header, value in SECURITY_HEADERS.items():
         response.headers[header] = value
-    origin = request.headers.get("Origin", "")
-    if origin in PUBLIC_WEB_ORIGINS:
+    if request.endpoint not in {"web_terminal", "web_chat", "web_health", "not_found_page", "honeypot"}:
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+    origin = get_request_origin()
+    if request.endpoint == "web_chat" and origin in PUBLIC_WEB_ORIGINS:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
         response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
@@ -177,9 +228,14 @@ def set_web_language(user_id: int, language: str) -> str:
 
 def get_request_ip() -> str:
     forwarded_for = str(request.headers.get("X-Forwarded-For") or "").strip()
-    if forwarded_for:
+    remote_addr = str(request.remote_addr or "").strip()
+    try:
+        is_local_proxy = ipaddress.ip_address(remote_addr).is_loopback
+    except ValueError:
+        is_local_proxy = False
+    if forwarded_for and is_local_proxy:
         return forwarded_for.split(",", 1)[0].strip()
-    return str(request.remote_addr or "").strip()
+    return remote_addr
 
 
 def is_rate_limited(endpoint: str | None, ip_address: str) -> bool:
@@ -212,6 +268,69 @@ def get_request_meta() -> dict[str, str]:
         "referrer": bot.clip_text(str(request.headers.get("Referer") or "").strip(), 240),
         "path": bot.clip_text(str(request.path or "").strip(), 120),
     }
+
+
+def get_request_origin() -> str:
+    return str(request.headers.get("Origin") or "").strip().rstrip("/")
+
+
+def is_allowed_web_origin() -> bool:
+    return get_request_origin() in PUBLIC_WEB_ORIGINS
+
+
+def is_cross_site_browser_request() -> bool:
+    fetch_site = str(request.headers.get("Sec-Fetch-Site") or "").strip().lower()
+    return fetch_site == "cross-site"
+
+
+def reject_web_chat(reason: str, status_code: int = 400) -> Any:
+    app.logger.warning(
+        "Rejected website chat reason=%s ip=%s origin=%s ua=%s",
+        reason,
+        get_request_ip(),
+        get_request_origin(),
+        request.headers.get("User-Agent", ""),
+    )
+    return jsonify({"ok": False, "reply": "Request rejected."}), status_code
+
+
+def parse_web_chat_payload() -> tuple[dict[str, Any] | None, Any | None]:
+    if is_cross_site_browser_request():
+        return None, reject_web_chat("cross-site fetch metadata", 403)
+
+    if not is_allowed_web_origin():
+        return None, reject_web_chat("invalid origin", 403)
+
+    content_length = request.content_length
+    if content_length is not None and content_length > WEB_CHAT_MAX_BYTES:
+        return None, reject_web_chat("payload too large", 413)
+
+    if not request.is_json:
+        return None, reject_web_chat("non-json content type", 415)
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return None, reject_web_chat("invalid json")
+
+    message = bot.normalize_plain_text(str(payload.get("message") or "")).strip()
+    if not message:
+        return None, reject_web_chat("empty message")
+    if len(message) > WEB_CHAT_MAX_MESSAGE_CHARS:
+        return None, reject_web_chat("message too long", 413)
+
+    client_key = bot.normalize_plain_text(str(payload.get("client_id") or "")).strip()
+    if len(client_key) > WEB_CHAT_MAX_CLIENT_ID_CHARS:
+        return None, reject_web_chat("client id too long")
+
+    requested_language = bot.normalize_plain_text(str(payload.get("language") or "")).strip()
+    if len(requested_language) > WEB_CHAT_MAX_LANGUAGE_CHARS:
+        return None, reject_web_chat("language too long")
+
+    return {
+        "message": message,
+        "client_id": client_key,
+        "language": requested_language,
+    }, None
 
 
 def get_client_label(client_key: str) -> str:
@@ -475,6 +594,11 @@ def enforce_login() -> Any:
         return None
     if is_rate_limited(request.endpoint, get_request_ip()):
         return jsonify({"ok": False, "reply": "Too many requests. Try again later."}), 429
+    if request.method == "POST" and request.endpoint not in {"web_chat"}:
+        submitted_token = str(request.form.get("csrf_token") or "")
+        if not is_valid_session_token("csrf_token", submitted_token):
+            record_admin_session_event("csrf_reject", ok=False, reason=request.endpoint or "unknown")
+            return jsonify({"ok": False, "reply": "Request rejected."}), 403
     if require_login():
         return None
     return redirect(url_for("login"))
@@ -687,12 +811,20 @@ def honeypot(requested_path: str = "") -> str:
 @app.route("/api/chat", methods=["POST", "OPTIONS"])
 def web_chat() -> Any:
     if request.method == "OPTIONS":
+        if is_cross_site_browser_request():
+            return ("", 403)
+        if not is_allowed_web_origin():
+            return ("", 403)
         return ("", 204)
 
-    payload = request.get_json(silent=True) or {}
-    message = str(payload.get("message") or "").strip()
-    client_key = str(payload.get("client_id") or "")
-    requested_language = str(payload.get("language") or "")
+    payload, error_response = parse_web_chat_payload()
+    if error_response is not None:
+        return error_response
+    assert payload is not None
+
+    message = str(payload["message"])
+    client_key = str(payload["client_id"])
+    requested_language = str(payload["language"])
     user_id = get_web_user_id(client_key)
 
     try:
@@ -709,7 +841,7 @@ def web_chat() -> Any:
             ok=False,
             error=error_body,
         )
-        return jsonify({"ok": False, "reply": f"API error:\n{error_body}"}), 502
+        return jsonify({"ok": False, "reply": "The AI service is temporarily unavailable."}), 502
     except Exception as exc:
         app.logger.exception("Website chat failed")
         record_web_chat_event(
@@ -721,7 +853,7 @@ def web_chat() -> Any:
             ok=False,
             error=str(exc),
         )
-        return jsonify({"ok": False, "reply": f"Error: {exc}"}), 500
+        return jsonify({"ok": False, "reply": "The chat service failed. Try again later."}), 500
 
     record_web_chat_event(user_id, client_key, message, requested_language, answer, ok=True)
     return jsonify({"ok": True, "reply": answer})

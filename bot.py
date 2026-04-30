@@ -18,7 +18,7 @@ from collections import defaultdict, deque
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from zoneinfo import ZoneInfo
 
 import requests
@@ -177,6 +177,8 @@ CONTENTS_KEYWORD_PATTERN = re.compile(r"\bcontents?\b", re.IGNORECASE)
 CONTENT_TYPE_JSON = "application/json"
 MIME_TYPE_JPEG = "image/jpeg"
 WEB_PAGE_SUMMARY_TITLE = "Web Page Summary"
+MAX_LINK_FETCH_BYTES = 1_000_000
+MAX_LINK_REDIRECTS = 5
 CMD_HIDEBUTTONS = "/hidebuttons"
 CMD_REWRITE = "/rewrite"
 CMD_SUMMARIZE = "/summarize"
@@ -1293,13 +1295,49 @@ def extract_page_text(html_content: str) -> tuple[str, str]:
     return title, cleaned
 
 
+def fetch_public_url(url: str) -> requests.Response:
+    current_url = validate_public_url(url)
+    headers = {"User-Agent": "cookai-link-analyzer/1.0"}
+
+    for _ in range(MAX_LINK_REDIRECTS + 1):
+        response = session.get(
+            current_url,
+            headers=headers,
+            timeout=20,
+            allow_redirects=False,
+            stream=True,
+        )
+        if response.is_redirect:
+            location = response.headers.get("Location", "").strip()
+            response.close()
+            if not location:
+                raise RuntimeError("Redirect response did not include a destination.")
+            current_url = validate_public_url(urljoin(current_url, location))
+            continue
+
+        content_length = response.headers.get("Content-Length", "").strip()
+        if content_length.isdigit() and int(content_length) > MAX_LINK_FETCH_BYTES:
+            response.close()
+            raise RuntimeError("Linked page is too large to analyze.")
+
+        chunks: list[bytes] = []
+        downloaded = 0
+        for chunk in response.iter_content(chunk_size=65536):
+            if not chunk:
+                continue
+            downloaded += len(chunk)
+            if downloaded > MAX_LINK_FETCH_BYTES:
+                response.close()
+                raise RuntimeError("Linked page is too large to analyze.")
+            chunks.append(chunk)
+        response._content = b"".join(chunks)
+        return response
+
+    raise RuntimeError("Too many redirects while fetching that link.")
+
+
 def fetch_link_context(url: str) -> str:
-    response = session.get(
-        url,
-        headers={"User-Agent": "cookai-link-analyzer/1.0"},
-        timeout=20,
-        allow_redirects=True,
-    )
+    response = fetch_public_url(url)
     response.raise_for_status()
 
     content_type = response.headers.get("Content-Type", "").lower()

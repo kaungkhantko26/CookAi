@@ -80,6 +80,7 @@
   </head>
   <body>
     <form class="card" method="post" action="/login">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <h1>MENTOR Admin</h1>
       <p>Sign in to open the dashboard for user monitoring and control.</p>
       {% with messages = get_flashed_messages(with_categories=true) %}

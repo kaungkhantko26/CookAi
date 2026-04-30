@@ -225,9 +225,11 @@
         </div>
         <div class="toolbar">
           <form method="post" action="/hash">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit">Create Login Hash</button>
           </form>
           <form method="post" action="/logout">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button class="secondary" type="submit">Logout</button>
           </form>
         </div>
@@ -288,17 +290,21 @@
                     {% endif %}
                     <div class="user-actions">
                       <form method="post" action="/user/{{ user.user_id }}/approve">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button type="submit">Approve</button>
                       </form>
                       <form method="post" action="/user/{{ user.user_id }}/unblock">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button class="warn" type="submit">Unblock</button>
                       </form>
                       <form method="post" action="/user/{{ user.user_id }}/block">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button class="danger" type="submit">Block</button>
                       </form>
                     </div>
                     <div class="reply">
                       <form method="post" action="/reply">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <input type="hidden" name="user_id" value="{{ user.user_id }}">
                         <textarea name="message" rows="3" placeholder="Send a direct message to this user"></textarea>
                         <button type="submit">Send Reply</button>

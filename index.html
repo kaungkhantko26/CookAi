@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: data:; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:; connect-src 'self' https://bot.kaungkhantko.top https://kaungkhantko.studio https://www.kaungkhantko.studio; frame-ancestors 'none'; base-uri 'self'; form-action 'self'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'">
     <meta name="referrer" content="strict-origin-when-cross-origin">
     <title>MENTOR Terminal</title>
     <style>
@@ -464,7 +464,6 @@
     </main>
 
     <script>
-      const API_URL = "https://bot.kaungkhantko.top/api/chat";
       const CLIENT_ID_KEY = "cookai_terminal_client_id";
       const form = document.querySelector("#form");
       const input = document.querySelector("#command");
@@ -474,7 +473,6 @@
       const send = document.querySelector("#send");
       const theme = document.querySelector("#theme");
       const language = document.querySelector("#language");
-      const promptHtml = '<span class="host">root@mentor</span>:<span class="path">~/terminal</span><span class="prompt">#</span>';
       const history = [];
       let historyIndex = 0;
       const THEME_KEY = "cookai_terminal_theme";
@@ -496,7 +494,7 @@
         try {
           const saved = JSON.parse(localStorage.getItem(CHAT_LOG_KEY) || "[]");
           if (!Array.isArray(saved)) return [];
-          return saved.filter((item) => item && typeof item.className === "string" && typeof item.html === "string");
+          return saved.filter((item) => item && typeof item.className === "string" && typeof item.text === "string");
         } catch {
           return [];
         }
@@ -506,38 +504,51 @@
         localStorage.setItem(CHAT_LOG_KEY, JSON.stringify(lines.slice(-CHAT_LOG_LIMIT)));
       }
 
-      function saveChatLine(className, html) {
+      function saveChatLine(className, text) {
         if (className === "system") return;
         const lines = readChatLog();
-        lines.push({ className, html, createdAt: Date.now() });
+        lines.push({ className, text, createdAt: Date.now() });
         writeChatLog(lines);
       }
 
-      function appendLine(className, html, persist = false) {
+      function appendLine(className, text, persist = false) {
         const line = document.createElement("div");
         line.className = `line ${className}`;
-        line.innerHTML = html;
+        line.textContent = text;
         screen.appendChild(line);
         screen.scrollTop = screen.scrollHeight;
-        if (persist) saveChatLine(className, html);
+        if (persist) saveChatLine(className, text);
+      }
+
+      function appendUserLine(command) {
+        const line = document.createElement("div");
+        line.className = "line user";
+
+        const host = document.createElement("span");
+        host.className = "host";
+        host.textContent = "root@mentor";
+
+        const path = document.createElement("span");
+        path.className = "path";
+        path.textContent = "~/terminal";
+
+        const prompt = document.createElement("span");
+        prompt.className = "prompt";
+        prompt.textContent = "#";
+
+        line.append(host, ":", path, prompt, ` ${command}`);
+        screen.appendChild(line);
+        screen.scrollTop = screen.scrollHeight;
+        saveChatLine("user", `root@mentor:~/terminal# ${command}`);
       }
 
       function restoreChatLog() {
         const lines = readChatLog();
         if (!lines.length) return;
         for (const item of lines) {
-          appendLine(item.className, item.html);
+          appendLine(item.className, item.text);
         }
         appendLine("system", `restored ${lines.length} local chat lines`);
-      }
-
-      function escapeHtml(value) {
-        return value
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;")
-          .replace(/'/g, "&#039;");
       }
 
       function setBusy(isBusy) {
@@ -576,7 +587,7 @@
 
       async function sendCommand(command) {
         if (command === "/clear") {
-          screen.innerHTML = "";
+          screen.textContent = "";
           localStorage.removeItem(CHAT_LOG_KEY);
           appendLine("system", "local chat history cleared");
           return;
@@ -603,15 +614,15 @@
 
         setBusy(true);
         try {
-          const response = await fetch(API_URL, {
+          const response = await fetch("/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ message: command, client_id: getClientId(), language: getCurrentLanguage() }),
           });
           const payload = await response.json();
-          appendLine(payload.ok ? "assistant" : "error", escapeHtml(payload.reply || "Empty response."), true);
+          appendLine(payload.ok ? "assistant" : "error", payload.reply || "Empty response.", true);
         } catch (error) {
-          appendLine("error", `network error: ${escapeHtml(String(error))}`, true);
+          appendLine("error", `network error: ${String(error)}`, true);
           appendLine("system", "backend unavailable. try again in a moment.");
         } finally {
           setBusy(false);
@@ -623,7 +634,7 @@
         event.preventDefault();
         const command = input.value.trim();
         if (!command) return;
-        appendLine("user", `${promptHtml} ${escapeHtml(command)}`, true);
+        appendUserLine(command);
         history.push(command);
         historyIndex = history.length;
         input.value = "";
