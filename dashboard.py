@@ -7,7 +7,7 @@ import time
 from typing import Any
 
 import requests
-from flask import Flask, abort, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, session, url_for
 from waitress import serve
 
 import bot
@@ -22,6 +22,7 @@ app = Flask(__name__)
 app.secret_key = bot.ADMIN_DASHBOARD_SECRET
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = True
 
 PUBLIC_WEB_ORIGINS = {
     "https://kaungkhantko.studio",
@@ -57,7 +58,15 @@ PUBLIC_ENDPOINTS = {
     "web_terminal",
     "web_chat",
     "web_health",
+    "honeypot",
 }
+HONEYPOT_PREFIXES = (
+    "/admin",
+    "/admin.html",
+    "/wp-admin",
+    "/phpmyadmin",
+    "/cpanel",
+)
 
 
 WEB_TERMINAL_HELP = """Available commands
@@ -107,6 +116,14 @@ RATE_LIMIT_RULES = {
 
 def require_login() -> bool:
     return request.endpoint in PUBLIC_ENDPOINTS or is_logged_in()
+
+
+def is_honeypot_path(path: str) -> bool:
+    normalized_path = (path or "").lower()
+    return any(
+        normalized_path == prefix or normalized_path.startswith(f"{prefix}/")
+        for prefix in HONEYPOT_PREFIXES
+    )
 
 
 @app.after_request
@@ -451,8 +468,8 @@ def process_web_chat_message(user_id: int, raw_text: str, requested_language: st
 
 @app.before_request
 def enforce_login() -> Any:
-    if "/admin" in request.path.lower():
-        abort(404)
+    if is_honeypot_path(request.path):
+        return None
     if is_rate_limited(request.endpoint, get_request_ip()):
         return jsonify({"ok": False, "reply": "Too many requests. Try again later."}), 429
     if require_login():
@@ -632,6 +649,26 @@ def web_terminal() -> str:
 @app.get("/health")
 def web_health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/admin")
+@app.get("/admin/")
+@app.get("/admin.html")
+@app.get("/admin/<path:requested_path>")
+@app.get("/wp-admin")
+@app.get("/wp-admin/<path:requested_path>")
+@app.get("/phpmyadmin")
+@app.get("/phpmyadmin/<path:requested_path>")
+@app.get("/cpanel")
+@app.get("/cpanel/<path:requested_path>")
+def honeypot(requested_path: str = "") -> str:
+    app.logger.warning(
+        "Honeypot hit path=%s ip=%s ua=%s",
+        request.path,
+        get_request_ip(),
+        request.headers.get("User-Agent", ""),
+    )
+    return render_template("honeypot.html")
 
 
 @app.route("/api/chat", methods=["POST", "OPTIONS"])
