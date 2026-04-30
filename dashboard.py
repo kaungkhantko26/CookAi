@@ -3,10 +3,11 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
+import time
 from typing import Any
 
 import requests
-from flask import Flask, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, abort, flash, jsonify, redirect, render_template, request, session, url_for
 from waitress import serve
 
 import bot
@@ -25,6 +26,23 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 PUBLIC_WEB_ORIGINS = {
     "https://kaungkhantko.studio",
     "https://www.kaungkhantko.studio",
+}
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "X-XSS-Protection": "1; mode=block",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
+    "Content-Security-Policy": (
+        "default-src 'self' https: data:; "
+        "script-src 'self' 'unsafe-inline' https:; "
+        "style-src 'self' 'unsafe-inline' https:; "
+        "connect-src 'self' https://bot.kaungkhantko.top https://kaungkhantko.studio https://www.kaungkhantko.studio; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    ),
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
 }
 
 
@@ -80,6 +98,11 @@ LANGUAGE_ALIASES = {
 web_language_preferences: dict[int, str] = {}
 WEB_ACTIVITY_LIMIT = 500
 ADMIN_SESSION_LIMIT = 300
+RATE_LIMIT_BUCKETS: dict[str, list[float]] = {}
+RATE_LIMIT_RULES = {
+    "login_post": (8, 300),
+    "web_chat": (40, 60),
+}
 
 
 def require_login() -> bool:
@@ -87,7 +110,9 @@ def require_login() -> bool:
 
 
 @app.after_request
-def add_public_api_headers(response: Any) -> Any:
+def add_response_headers(response: Any) -> Any:
+    for header, value in SECURITY_HEADERS.items():
+        response.headers[header] = value
     origin = request.headers.get("Origin", "")
     if origin in PUBLIC_WEB_ORIGINS:
         response.headers["Access-Control-Allow-Origin"] = origin
@@ -137,6 +162,28 @@ def get_request_ip() -> str:
     if forwarded_for:
         return forwarded_for.split(",", 1)[0].strip()
     return str(request.remote_addr or "").strip()
+
+
+def is_rate_limited(endpoint: str | None, ip_address: str) -> bool:
+    if request.method == "OPTIONS":
+        return False
+    if not endpoint or endpoint not in RATE_LIMIT_RULES:
+        return False
+
+    max_requests, window_seconds = RATE_LIMIT_RULES[endpoint]
+    now = time.time()
+    bucket_key = f"{endpoint}:{ip_address}"
+    recent_requests = [
+        timestamp
+        for timestamp in RATE_LIMIT_BUCKETS.get(bucket_key, [])
+        if now - timestamp < window_seconds
+    ]
+    if len(recent_requests) >= max_requests:
+        RATE_LIMIT_BUCKETS[bucket_key] = recent_requests
+        return True
+    recent_requests.append(now)
+    RATE_LIMIT_BUCKETS[bucket_key] = recent_requests
+    return False
 
 
 def get_request_meta() -> dict[str, str]:
@@ -404,6 +451,10 @@ def process_web_chat_message(user_id: int, raw_text: str, requested_language: st
 
 @app.before_request
 def enforce_login() -> Any:
+    if "/admin" in request.path.lower():
+        abort(404)
+    if is_rate_limited(request.endpoint, get_request_ip()):
+        return jsonify({"ok": False, "reply": "Too many requests. Try again later."}), 429
     if require_login():
         return None
     return redirect(url_for("login"))
