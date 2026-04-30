@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>KaungKhantKo AI Terminal</title>
+    <title>MENTOR Terminal</title>
     <style>
       :root {
         color-scheme: dark;
@@ -118,6 +118,73 @@
           linear-gradient(90deg, rgba(255,0,0,0.015), rgba(0,255,0,0.01), rgba(0,0,255,0.015));
         background-size: 100% 4px, 6px 100%;
         opacity: var(--scan-opacity);
+      }
+      .splash {
+        position: fixed;
+        inset: 0;
+        z-index: 10;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background:
+          radial-gradient(circle at 50% 32%, var(--green-soft), transparent 18rem),
+          linear-gradient(180deg, var(--bg), #000 115%);
+        transition: opacity 420ms ease, visibility 420ms ease;
+      }
+      .splash.is-hidden {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      .splash-panel {
+        width: min(520px, 100%);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 28px;
+        background: rgba(0, 0, 0, 0.38);
+        box-shadow: 0 30px 90px rgba(0, 0, 0, 0.35);
+      }
+      .splash-mark {
+        display: grid;
+        gap: 8px;
+      }
+      .splash-kicker {
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+      .splash-title {
+        margin: 0;
+        color: var(--text);
+        font-size: clamp(2.4rem, 9vw, 5rem);
+        line-height: 0.9;
+        letter-spacing: 0;
+      }
+      .splash-subtitle {
+        margin: 0;
+        color: var(--green);
+        font-size: 0.95rem;
+      }
+      .boot-meter {
+        position: relative;
+        height: 8px;
+        margin-top: 28px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.06);
+      }
+      .boot-meter::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        width: 42%;
+        border-radius: inherit;
+        background: var(--green);
+        animation: bootSweep 1.25s ease-in-out infinite;
+      }
+      @keyframes bootSweep {
+        0% { transform: translateX(-110%); }
+        100% { transform: translateX(250%); }
       }
       .terminal {
         min-height: 100vh;
@@ -341,12 +408,22 @@
     </style>
   </head>
   <body>
-    <main class="terminal" aria-label="KaungKhantKo AI terminal">
+    <div id="splash" class="splash" role="status" aria-live="polite">
+      <div class="splash-panel">
+        <div class="splash-mark">
+          <span class="splash-kicker">initializing terminal</span>
+          <h1 class="splash-title">MENTOR</h1>
+          <p class="splash-subtitle">secure session ready</p>
+        </div>
+        <div class="boot-meter" aria-hidden="true"></div>
+      </div>
+    </div>
+    <main class="terminal" aria-label="MENTOR terminal">
       <header class="topbar">
         <span class="dot red"></span>
         <span class="dot yellow"></span>
         <span class="dot green"></span>
-        <span class="title">kaungkhantko.studio - AI terminal</span>
+        <span class="title">mentor:/terminal</span>
         <div class="theme-picker">
           <label for="theme">theme</label>
           <select id="theme" name="theme" aria-label="Terminal theme">
@@ -378,7 +455,7 @@
       </header>
       <section id="screen" class="screen" aria-live="polite"></section>
       <form id="form" class="inputbar" autocomplete="off">
-        <label class="prompt-label" for="command"><span class="host">root@studio</span>:<span class="path">~/bot</span>#</label>
+        <label class="prompt-label" for="command"><span class="host">root@mentor</span>:<span class="path">~/terminal</span>#</label>
         <input id="command" name="command" type="text" spellcheck="false" autofocus placeholder="type /help or ask anything">
         <button id="send" type="submit">run</button>
       </form>
@@ -390,11 +467,12 @@
       const form = document.querySelector("#form");
       const input = document.querySelector("#command");
       const screen = document.querySelector("#screen");
+      const splash = document.querySelector("#splash");
       const status = document.querySelector("#status");
       const send = document.querySelector("#send");
       const theme = document.querySelector("#theme");
       const language = document.querySelector("#language");
-      const promptHtml = '<span class="host">root@studio</span>:<span class="path">~/bot</span><span class="prompt">#</span>';
+      const promptHtml = '<span class="host">root@mentor</span>:<span class="path">~/terminal</span><span class="prompt">#</span>';
       const history = [];
       let historyIndex = 0;
       const THEME_KEY = "cookai_terminal_theme";
@@ -575,10 +653,13 @@
 
       applyTheme(localStorage.getItem(THEME_KEY) || "kali");
       applyLanguage(localStorage.getItem(LANGUAGE_KEY) || "default");
-      appendLine("system", "KaungKhantKo AI Terminal");
+      appendLine("system", "MENTOR Terminal");
       appendLine("system", "type /help to list commands, /clear to clean the screen, /theme to list themes, /language to choose output language");
-      appendLine("system", "Telegram and website chat use the same bot backend.");
       restoreChatLog();
+      window.setTimeout(() => {
+        splash.classList.add("is-hidden");
+        input.focus();
+      }, 1450);
     </script>
   </body>
 </html>

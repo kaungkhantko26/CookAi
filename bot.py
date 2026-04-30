@@ -43,7 +43,7 @@ BASE_RESPONSE_RULES = (
 
 FOUNDER_CONTEXT = (
     "Founder context: Kaung Khant Ko is the founder, owner, and developer of "
-    "CookAI and the KaungKhantKo AI Terminal. If a user mentions Kaung, Khant, "
+    "MENTOR Terminal. If a user mentions Kaung, Khant, "
     "Ko, KaungKhantKo, or Kaung Khant Ko, understand that they are referring "
     "to the founder unless the surrounding context clearly means someone else. "
     "Do not invent private details about the founder."
@@ -67,7 +67,7 @@ TELEGRAM_ADMIN_BOT_TOKEN = os.getenv("TELEGRAM_ADMIN_BOT_TOKEN", "").strip()
 BOT_SYSTEM_PROMPT = with_base_rules(
     os.getenv(
         "BOT_SYSTEM_PROMPT",
-        "You are a helpful Telegram assistant.",
+        "You are MENTOR, a helpful terminal assistant.",
     )
 )
 PRESENTATION_SYSTEM_PROMPT = with_base_rules(
@@ -86,7 +86,7 @@ PRESENTATION_SYSTEM_PROMPT = with_base_rules(
 BURMESE_SYSTEM_PROMPT = with_base_rules(
     os.getenv("BURMESE_SYSTEM_PROMPT", "").strip()
     or (
-        "You are a helpful Telegram assistant who writes natural, smooth Burmese. "
+        "You are MENTOR, a helpful terminal assistant who writes natural, smooth Burmese. "
         "Reply like a real Burmese chatbot having a normal conversation with a Myanmar user. "
         "Use fluent, modern Burmese sentence flow with complete thoughts and complete ending sentences. "
         "Do not stop in the middle of a sentence. "
@@ -2029,7 +2029,7 @@ def handle_text_message(message: dict[str, Any]) -> None:  # NOSONAR
             send_message(
                 chat_id,
                 (
-                    "This bot uses access login.\n"
+                    "MENTOR uses access login.\n"
                     "Ask the admin for a one-time hash.\n"
                     "Then use /login <hash>.\n"
                     "Example:\n"
@@ -2095,7 +2095,7 @@ def handle_text_message(message: dict[str, Any]) -> None:  # NOSONAR
         send_message(
             chat_id,
             (
-                "Bot is online. Send a message to chat.\n"
+                "MENTOR Terminal is online. Send a message to chat.\n"
                 "Use /login <hash> only when setting up a new user.\n"
                 "Use /presentation to switch into slide-making mode.\n"
                 "Use /burmese to reply in Burmese.\n"
@@ -2256,7 +2256,7 @@ def handle_text_message(message: dict[str, Any]) -> None:  # NOSONAR
     if command in {"/hash", "/users", "/user", "/approve", "/block", "/unblock", "/replyuser"}:
         send_message(
             chat_id,
-            "Use the CookAI admin dashboard bot for admin controls.",
+            "Use the MENTOR admin dashboard bot for admin controls.",
             reply_to_message_id=message_id,
         )
         return

@@ -17,7 +17,7 @@ if not ADMIN_BOT_TOKEN:
 
 ADMIN_TELEGRAM_API_BASE = f"https://api.telegram.org/bot{ADMIN_BOT_TOKEN}"
 ADMIN_COMMANDS = [
-    {"command": "start", "description": "Show CookAI admin dashboard help"},
+    {"command": "start", "description": "Show MENTOR admin dashboard help"},
     {"command": "help", "description": "Show admin commands"},
     {"command": "hash", "description": "Create a login hash"},
     {"command": "users", "description": "List known users"},
@@ -82,7 +82,7 @@ def get_admin_updates(offset: int | None = None) -> list[dict[str, Any]]:
 
 def admin_help_text() -> str:
     return (
-        "CookAI admin dashboard commands:\n"
+        "MENTOR admin dashboard commands:\n"
         "/start\n"
         "/help\n"
         "/hash\n"
