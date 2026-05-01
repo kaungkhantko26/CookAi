@@ -489,6 +489,8 @@
     </main>
 
     <script>
+      const CLIENT_ID_KEY = "cookai_terminal_client_id";
+      const WEB_CHAT_TOKEN = {{ csrf_token|tojson }};
       const form = document.querySelector("#form");
       const input = document.querySelector("#command");
       const screen = document.querySelector("#screen");
@@ -505,6 +507,14 @@
       const CHAT_LOG_LIMIT = 120;
       const THEMES = new Set(["kali", "homebrew", "space", "toystory", "matrix", "cyberpunk", "paper"]);
       const LANGUAGE_OPTIONS = new Set([...language.options].map((option) => option.value.toLowerCase()));
+
+      function getClientId() {
+        const existing = localStorage.getItem(CLIENT_ID_KEY);
+        if (existing) return existing;
+        const generated = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+        localStorage.setItem(CLIENT_ID_KEY, generated);
+        return generated;
+      }
 
       function readChatLog() {
         try {
@@ -601,6 +611,26 @@
         return localStorage.getItem(LANGUAGE_KEY) || "default";
       }
 
+      async function readApiResponse(response) {
+        const contentType = response.headers.get("content-type") || "";
+        if (contentType.includes("application/json")) {
+          return response.json();
+        }
+
+        const body = await response.text();
+        const preview = body.replace(/\s+/g, " ").trim().slice(0, 120);
+        if (response.status === 403) {
+          return { ok: false, reply: "Request blocked by website security. Refresh the page and try again." };
+        }
+        if (response.status === 429 || response.status === 503) {
+          return { ok: false, reply: "Too many requests. Wait a moment, then try again." };
+        }
+        return {
+          ok: false,
+          reply: `API returned ${response.status || "an invalid response"} instead of JSON.${preview ? ` ${preview}` : ""}`,
+        };
+      }
+
       async function sendCommand(command) {
         if (command === "/clear") {
           screen.textContent = "";
@@ -632,10 +662,10 @@
         try {
           const response = await fetch("/api/chat", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: command, language: getCurrentLanguage() }),
+            headers: { "Content-Type": "application/json", "X-CSRF-Token": WEB_CHAT_TOKEN },
+            body: JSON.stringify({ message: command, client_id: getClientId(), language: getCurrentLanguage() }),
           });
-          const payload = await response.json();
+          const payload = await readApiResponse(response);
           const className = payload.ok ? "assistant" : "error";
           appendLine(className, payload.reply || "Empty response.", true);
         } catch (error) {

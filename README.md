@@ -178,6 +178,8 @@ pm2 startup
 - `dashboard.py` also serves a public terminal-style website chatbot
 - local URL: `http://127.0.0.1:${ADMIN_DASHBOARD_PORT}/bot`
 - website chat requests are proxied through same-origin `/api/chat`
+- `/api/chat` requires an allowed `Origin`, JSON content, a per-session `X-CSRF-Token`, bounded payload sizes, and same-origin browser fetch metadata
+- abuse controls include Nginx request limiting, Flask per-IP rolling limits, and a configurable cooldown via `WEB_CHAT_COOLDOWN_SECONDS`
 - browser commands include `/help`, `/reset`, `/burmese`, `/english`, `/presentation`, `/link`, `/rewrite`, `/summarize`, `/caption`, `/hook`, and `/hashtags`
 - `bot-dashboard.nginx.conf` maps `https://kaungkhantko.studio` to the terminal UI and keeps the chat API same-origin at `/api/chat`; `bot.kaungkhantko.top` is reserved for the admin dashboard
 

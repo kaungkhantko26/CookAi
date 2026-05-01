@@ -125,6 +125,7 @@ web_language_preferences: dict[int, str] = {}
 WEB_ACTIVITY_LIMIT = 500
 ADMIN_SESSION_LIMIT = 300
 RATE_LIMIT_BUCKETS: dict[str, list[float]] = {}
+WEB_CHAT_COOLDOWN_BUCKETS: dict[str, float] = {}
 RATE_LIMIT_RULES = {
     "login_post": (8, 300),
     "web_chat": (18, 60),
@@ -133,6 +134,7 @@ WEB_CHAT_MAX_BYTES = int(os.getenv("WEB_CHAT_MAX_BYTES", "8192").strip())
 WEB_CHAT_MAX_MESSAGE_CHARS = int(os.getenv("WEB_CHAT_MAX_MESSAGE_CHARS", "2000").strip())
 WEB_CHAT_MAX_CLIENT_ID_CHARS = int(os.getenv("WEB_CHAT_MAX_CLIENT_ID_CHARS", "100").strip())
 WEB_CHAT_MAX_LANGUAGE_CHARS = 60
+WEB_CHAT_COOLDOWN_SECONDS = float(os.getenv("WEB_CHAT_COOLDOWN_SECONDS", "2").strip())
 CSRF_TOKEN_BYTES = 32
 
 
@@ -185,7 +187,7 @@ def add_response_headers(response: Any) -> Any:
     origin = get_request_origin()
     if request.endpoint == "web_chat" and origin in PUBLIC_WEB_ORIGINS:
         response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-CSRF-Token"
         response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
         response.headers["Vary"] = "Origin"
     return response
@@ -260,6 +262,18 @@ def is_rate_limited(endpoint: str | None, ip_address: str) -> bool:
     return False
 
 
+def is_web_chat_cooling_down(ip_address: str) -> bool:
+    if WEB_CHAT_COOLDOWN_SECONDS <= 0:
+        return False
+
+    now = time.time()
+    last_request_at = WEB_CHAT_COOLDOWN_BUCKETS.get(ip_address)
+    if last_request_at is not None and now - last_request_at < WEB_CHAT_COOLDOWN_SECONDS:
+        return True
+    WEB_CHAT_COOLDOWN_BUCKETS[ip_address] = now
+    return False
+
+
 def get_request_meta() -> dict[str, str]:
     return {
         "ip": get_request_ip(),
@@ -283,6 +297,11 @@ def is_cross_site_browser_request() -> bool:
     return fetch_site == "cross-site"
 
 
+def is_valid_web_fetch_site() -> bool:
+    fetch_site = str(request.headers.get("Sec-Fetch-Site") or "").strip().lower()
+    return not fetch_site or fetch_site in {"same-origin", "none"}
+
+
 def reject_web_chat(reason: str, status_code: int = 400) -> Any:
     app.logger.warning(
         "Rejected website chat reason=%s ip=%s origin=%s ua=%s",
@@ -298,8 +317,18 @@ def parse_web_chat_payload() -> tuple[dict[str, Any] | None, Any | None]:
     if is_cross_site_browser_request():
         return None, reject_web_chat("cross-site fetch metadata", 403)
 
+    if not is_valid_web_fetch_site():
+        return None, reject_web_chat("invalid fetch metadata", 403)
+
     if not is_allowed_web_origin():
         return None, reject_web_chat("invalid origin", 403)
+
+    submitted_token = str(request.headers.get("X-CSRF-Token") or "")
+    if not is_valid_session_token("csrf_token", submitted_token):
+        return None, reject_web_chat("invalid web chat token", 403)
+
+    if is_web_chat_cooling_down(get_request_ip()):
+        return None, reject_web_chat("web chat cooldown", 429)
 
     content_length = request.content_length
     if content_length is not None and content_length > WEB_CHAT_MAX_BYTES:
@@ -785,7 +814,16 @@ def not_found_page() -> tuple[str, int]:
 
 @app.errorhandler(404)
 def handle_not_found(_: Exception) -> tuple[str, int]:
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False, "reply": "API route not found."}), 404
     return render_template("404.html"), 404
+
+
+@app.errorhandler(405)
+def handle_method_not_allowed(_: Exception) -> tuple[Any, int]:
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False, "reply": "Method not allowed."}), 405
+    return render_template("404.html"), 405
 
 
 @app.get("/admin")

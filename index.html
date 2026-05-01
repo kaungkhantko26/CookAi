@@ -585,6 +585,26 @@
         return localStorage.getItem(LANGUAGE_KEY) || "default";
       }
 
+      async function readApiResponse(response) {
+        const contentType = response.headers.get("content-type") || "";
+        if (contentType.includes("application/json")) {
+          return response.json();
+        }
+
+        const body = await response.text();
+        const preview = body.replace(/\s+/g, " ").trim().slice(0, 120);
+        if (response.status === 403) {
+          return { ok: false, reply: "Request blocked by website security. Refresh the page and try again." };
+        }
+        if (response.status === 429 || response.status === 503) {
+          return { ok: false, reply: "Too many requests. Wait a moment, then try again." };
+        }
+        return {
+          ok: false,
+          reply: `API returned ${response.status || "an invalid response"} instead of JSON.${preview ? ` ${preview}` : ""}`,
+        };
+      }
+
       async function sendCommand(command) {
         if (command === "/clear") {
           screen.textContent = "";
@@ -619,7 +639,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ message: command, client_id: getClientId(), language: getCurrentLanguage() }),
           });
-          const payload = await response.json();
+          const payload = await readApiResponse(response);
           appendLine(payload.ok ? "assistant" : "error", payload.reply || "Empty response.", true);
         } catch (error) {
           appendLine("error", `network error: ${String(error)}`, true);
