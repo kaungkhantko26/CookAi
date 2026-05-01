@@ -481,6 +481,7 @@
       const CHAT_LOG_LIMIT = 120;
       const THEMES = new Set(["kali", "homebrew", "space", "toystory", "matrix", "cyberpunk", "paper"]);
       const LANGUAGE_OPTIONS = new Set([...language.options].map((option) => option.value.toLowerCase()));
+      const IS_STATIC_PREVIEW = true;
 
       function getClientId() {
         const existing = localStorage.getItem(CLIENT_ID_KEY);
@@ -630,6 +631,15 @@
         } else if (command.startsWith("/language")) {
           const selected = command.replace(/^\/language\s*/i, "");
           if (selected) applyLanguage(selected, true);
+        }
+
+        if (IS_STATIC_PREVIEW) {
+          appendLine(
+            "error",
+            "Chat API is disabled on the static preview. Open the Flask-backed site at /bot or deploy the dashboard service behind this domain.",
+            true
+          );
+          return;
         }
 
         setBusy(true);
