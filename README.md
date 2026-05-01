@@ -14,7 +14,6 @@ CookAI is a Telegram AI assistant with a split admin system:
 - a user-facing chatbot
 - a separate admin Telegram bot
 - a web admin dashboard
-- a public website terminal chat UI for `kaungkhantko.studio`
 
 It uses OpenRouter for AI responses, supports login-based access control, and includes practical tools for writing, analysis, productivity, study, business planning, PDF export, and QR generation.
 
@@ -23,7 +22,6 @@ It uses OpenRouter for AI responses, supports login-based access control, and in
 - login-gated user access with one-time hashes
 - separate admin dashboard bot for user control
 - web dashboard for browser-based monitoring and admin actions
-- Kali-style browser terminal chat at `/bot` and `/terminal`
 - plain-text AI replies without Markdown formatting in bot output
 - short conversation memory with tone and persona preferences
 - file and photo analysis
@@ -62,7 +60,6 @@ It uses OpenRouter for AI responses, supports login-based access control, and in
 - `bot.py` - main user bot
 - `admin_bot.py` - admin Telegram dashboard bot
 - `dashboard.py` - web admin dashboard
-- `templates/terminal.html` - public website terminal chat UI
 - `.env.example` - public-safe environment template for GitHub
 - `.env` - local-only secrets and runtime configuration, do not upload
 - `requirements.txt` - Python dependencies
@@ -173,15 +170,12 @@ pm2 startup
 - default local bind uses `127.0.0.1:${ADMIN_DASHBOARD_PORT}`
 - the dashboard shows user status, recent activity, login-hash creation, approve/block/unblock actions, and direct user replies
 
-## Website Chat
+## Website Status
 
-- `dashboard.py` also serves a public terminal-style website chatbot
-- local URL: `http://127.0.0.1:${ADMIN_DASHBOARD_PORT}/bot`
-- website chat requests are proxied through same-origin `/api/chat`
-- `/api/chat` requires an allowed `Origin`, JSON content, a per-session `X-CSRF-Token`, bounded payload sizes, and same-origin browser fetch metadata
-- abuse controls include Nginx request limiting, Flask per-IP rolling limits, and a configurable cooldown via `WEB_CHAT_COOLDOWN_SECONDS`
-- browser commands include `/help`, `/reset`, `/burmese`, `/english`, `/presentation`, `/link`, `/rewrite`, `/summarize`, `/caption`, `/hook`, and `/hashtags`
-- `bot-dashboard.nginx.conf` maps `https://kaungkhantko.studio` to the terminal UI and keeps the chat API same-origin at `/api/chat`; `bot.kaungkhantko.top` is reserved for the admin dashboard
+- the public `kaungkhantko.studio` website and `/api/chat` endpoint have been removed
+- the Nginx config returns `410 Gone` for `kaungkhantko.studio` and `www.kaungkhantko.studio`
+- GitHub Pages source files and the custom-domain `CNAME` file have been deleted from this repository
+- `bot.kaungkhantko.top` remains reserved for the password-protected admin dashboard
 
 ## Notes
 

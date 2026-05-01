@@ -476,11 +476,6 @@ known_user_profiles: dict[int, dict[str, Any]] = {
     for user_id, value in normalize_int_key_map(PERSISTENT_STATE.get("known_user_profiles")).items()
 }
 activity_log: list[dict[str, Any]] = normalize_dict_list(PERSISTENT_STATE.get("activity_log"))
-web_user_profiles: dict[int, dict[str, Any]] = {
-    user_id: value if isinstance(value, dict) else {}
-    for user_id, value in normalize_int_key_map(PERSISTENT_STATE.get("web_user_profiles")).items()
-}
-web_activity_log: list[dict[str, Any]] = normalize_dict_list(PERSISTENT_STATE.get("web_activity_log"))
 admin_session_log: list[dict[str, Any]] = normalize_dict_list(PERSISTENT_STATE.get("admin_session_log"))
 note_store: dict[int, list[dict[str, Any]]] = {
     user_id: value if isinstance(value, list) else []
@@ -513,8 +508,6 @@ def save_persistent_state() -> None:
         "login_hashes": login_hash_store,
         "known_user_profiles": {str(key): value for key, value in known_user_profiles.items()},
         "activity_log": activity_log,
-        "web_user_profiles": {str(key): value for key, value in web_user_profiles.items()},
-        "web_activity_log": web_activity_log,
         "admin_session_log": admin_session_log,
     }
     write_state_payload(payload)
@@ -556,21 +549,6 @@ def refresh_auth_related_state() -> None:
             if isinstance(item, dict):
                 activity_log.append(item)
 
-    web_user_profiles.clear()
-    web_user_profiles.update(
-        {
-            user_id: value if isinstance(value, dict) else {}
-            for user_id, value in normalize_int_key_map(disk_state.get("web_user_profiles")).items()
-        }
-    )
-
-    web_activity_log.clear()
-    raw_web_activity = disk_state.get("web_activity_log")
-    if isinstance(raw_web_activity, list):
-        for item in raw_web_activity:
-            if isinstance(item, dict):
-                web_activity_log.append(item)
-
     admin_session_log.clear()
     raw_admin_sessions = disk_state.get("admin_session_log")
     if isinstance(raw_admin_sessions, list):
@@ -587,8 +565,6 @@ def save_auth_related_state() -> None:
     payload["login_hashes"] = login_hash_store
     payload["known_user_profiles"] = {str(key): value for key, value in known_user_profiles.items()}
     payload["activity_log"] = activity_log
-    payload["web_user_profiles"] = {str(key): value for key, value in web_user_profiles.items()}
-    payload["web_activity_log"] = web_activity_log
     payload["admin_session_log"] = admin_session_log
     payload["notes"] = {str(key): value for key, value in note_store.items()}
     write_state_payload(payload)

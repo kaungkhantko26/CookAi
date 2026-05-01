@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import hashlib
 import hmac
 import ipaddress
-import os
 import secrets
 import time
 from typing import Any
 
-import requests
 from flask import Flask, flash, jsonify, redirect, render_template, request, session, url_for
 from waitress import serve
 
@@ -27,19 +24,6 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = True
 app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
 
-PUBLIC_WEB_ORIGINS = {
-    origin.strip().rstrip("/")
-    for origin in os.getenv(
-        "PUBLIC_WEB_ORIGINS",
-        (
-            "https://kaungkhantko.studio,"
-            "https://www.kaungkhantko.studio,"
-            "http://127.0.0.1:5060,"
-            "http://localhost:5060"
-        ),
-    ).split(",")
-    if origin.strip()
-}
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -86,55 +70,11 @@ HONEYPOT_PREFIXES = (
 )
 
 
-WEB_TERMINAL_HELP = """Available commands
-/help                 show this command list
-/clear                clear terminal screen
-/reset                reset web chat memory
-/english              use normal English replies
-/burmese [message]    use Burmese replies
-/chinese [message]    use Chinese replies
-/language <name>      reply in any language, for example Japanese, Thai, Spanish
-/presentation <brief> create a slide/deck outline
-/link <url>           analyze a public link
-/rewrite <text>       rewrite text clearly
-/summarize <text>     summarize text
-/shorter <text>       make text shorter
-/formal <text>        make text formal
-/friendly <text>      make text friendly
-/caption <topic>      write a social caption
-/hook <topic>         write hooks
-/hashtags <topic>     suggest hashtags
-
-You can also type any normal message."""
-
-LANGUAGE_ALIASES = {
-    "default": "default",
-    "auto": "default",
-    "english": "default",
-    "en": "default",
-    "burmese": "Burmese",
-    "myanmar": "Burmese",
-    "mm": "Burmese",
-    "my": "Burmese",
-    "chinese": "Chinese",
-    "zh": "Chinese",
-    "cn": "Chinese",
-    "mandarin": "Chinese",
-}
-web_language_preferences: dict[int, str] = {}
-WEB_ACTIVITY_LIMIT = 500
 ADMIN_SESSION_LIMIT = 300
 RATE_LIMIT_BUCKETS: dict[str, list[float]] = {}
-WEB_CHAT_COOLDOWN_BUCKETS: dict[str, float] = {}
 RATE_LIMIT_RULES = {
     "login_post": (8, 300),
-    "web_chat": (18, 60),
 }
-WEB_CHAT_MAX_BYTES = int(os.getenv("WEB_CHAT_MAX_BYTES", "8192").strip())
-WEB_CHAT_MAX_MESSAGE_CHARS = int(os.getenv("WEB_CHAT_MAX_MESSAGE_CHARS", "2000").strip())
-WEB_CHAT_MAX_CLIENT_ID_CHARS = int(os.getenv("WEB_CHAT_MAX_CLIENT_ID_CHARS", "100").strip())
-WEB_CHAT_MAX_LANGUAGE_CHARS = 60
-WEB_CHAT_COOLDOWN_SECONDS = float(os.getenv("WEB_CHAT_COOLDOWN_SECONDS", "2").strip())
 CSRF_TOKEN_BYTES = 32
 
 
@@ -184,48 +124,7 @@ def add_response_headers(response: Any) -> Any:
     if request.endpoint not in {"web_terminal", "web_chat", "web_health", "not_found_page", "honeypot"}:
         response.headers["Cache-Control"] = "no-store, max-age=0"
         response.headers["Pragma"] = "no-cache"
-    origin = get_request_origin()
-    if request.endpoint == "web_chat" and origin in PUBLIC_WEB_ORIGINS:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-CSRF-Token"
-        response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
-        response.headers["Vary"] = "Origin"
     return response
-
-
-def get_web_user_id(client_key: str = "") -> int:
-    normalized_key = bot.normalize_plain_text(client_key).strip()
-    if normalized_key:
-        digest = hashlib.sha256(normalized_key.encode("utf-8")).hexdigest()
-        return -(int(digest[:12], 16) % 2_000_000_000) - 1
-
-    existing = session.get("web_user_id")
-    if isinstance(existing, int):
-        return existing
-
-    # Keep website users separate from real Telegram IDs.
-    web_user_id = -secrets.randbelow(2_000_000_000) - 1
-    session["web_user_id"] = web_user_id
-    return web_user_id
-
-
-def normalize_web_language(language: str) -> str:
-    normalized = bot.normalize_plain_text(language).strip()
-    if not normalized:
-        return "default"
-    return LANGUAGE_ALIASES.get(normalized.lower(), normalized[:60])
-
-
-def get_web_language(user_id: int) -> str:
-    value = web_language_preferences.get(user_id) or str(session.get("web_language") or "default")
-    return normalize_web_language(value)
-
-
-def set_web_language(user_id: int, language: str) -> str:
-    normalized = normalize_web_language(language)
-    web_language_preferences[user_id] = normalized
-    session["web_language"] = normalized
-    return normalized
 
 
 def get_request_ip() -> str:
@@ -262,18 +161,6 @@ def is_rate_limited(endpoint: str | None, ip_address: str) -> bool:
     return False
 
 
-def is_web_chat_cooling_down(ip_address: str) -> bool:
-    if WEB_CHAT_COOLDOWN_SECONDS <= 0:
-        return False
-
-    now = time.time()
-    last_request_at = WEB_CHAT_COOLDOWN_BUCKETS.get(ip_address)
-    if last_request_at is not None and now - last_request_at < WEB_CHAT_COOLDOWN_SECONDS:
-        return True
-    WEB_CHAT_COOLDOWN_BUCKETS[ip_address] = now
-    return False
-
-
 def get_request_meta() -> dict[str, str]:
     return {
         "ip": get_request_ip(),
@@ -282,160 +169,6 @@ def get_request_meta() -> dict[str, str]:
         "referrer": bot.clip_text(str(request.headers.get("Referer") or "").strip(), 240),
         "path": bot.clip_text(str(request.path or "").strip(), 120),
     }
-
-
-def get_request_origin() -> str:
-    return str(request.headers.get("Origin") or "").strip().rstrip("/")
-
-
-def is_allowed_web_origin() -> bool:
-    return get_request_origin() in PUBLIC_WEB_ORIGINS
-
-
-def is_cross_site_browser_request() -> bool:
-    fetch_site = str(request.headers.get("Sec-Fetch-Site") or "").strip().lower()
-    return fetch_site == "cross-site"
-
-
-def is_valid_web_fetch_site() -> bool:
-    fetch_site = str(request.headers.get("Sec-Fetch-Site") or "").strip().lower()
-    return not fetch_site or fetch_site in {"same-origin", "none"}
-
-
-def reject_web_chat(reason: str, status_code: int = 400) -> Any:
-    app.logger.warning(
-        "Rejected website chat reason=%s ip=%s origin=%s ua=%s",
-        reason,
-        get_request_ip(),
-        get_request_origin(),
-        request.headers.get("User-Agent", ""),
-    )
-    return jsonify({"ok": False, "reply": "Request rejected."}), status_code
-
-
-def parse_web_chat_payload() -> tuple[dict[str, Any] | None, Any | None]:
-    if is_cross_site_browser_request():
-        return None, reject_web_chat("cross-site fetch metadata", 403)
-
-    if not is_valid_web_fetch_site():
-        return None, reject_web_chat("invalid fetch metadata", 403)
-
-    if not is_allowed_web_origin():
-        return None, reject_web_chat("invalid origin", 403)
-
-    submitted_token = str(request.headers.get("X-CSRF-Token") or "")
-    if not is_valid_session_token("csrf_token", submitted_token):
-        return None, reject_web_chat("invalid web chat token", 403)
-
-    if is_web_chat_cooling_down(get_request_ip()):
-        return None, reject_web_chat("web chat cooldown", 429)
-
-    content_length = request.content_length
-    if content_length is not None and content_length > WEB_CHAT_MAX_BYTES:
-        return None, reject_web_chat("payload too large", 413)
-
-    if not request.is_json:
-        return None, reject_web_chat("non-json content type", 415)
-
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        return None, reject_web_chat("invalid json")
-
-    message = bot.normalize_plain_text(str(payload.get("message") or "")).strip()
-    if not message:
-        return None, reject_web_chat("empty message")
-    if len(message) > WEB_CHAT_MAX_MESSAGE_CHARS:
-        return None, reject_web_chat("message too long", 413)
-
-    client_key = bot.normalize_plain_text(str(payload.get("client_id") or "")).strip()
-    if len(client_key) > WEB_CHAT_MAX_CLIENT_ID_CHARS:
-        return None, reject_web_chat("client id too long")
-
-    requested_language = bot.normalize_plain_text(str(payload.get("language") or "")).strip()
-    if len(requested_language) > WEB_CHAT_MAX_LANGUAGE_CHARS:
-        return None, reject_web_chat("language too long")
-
-    return {
-        "message": message,
-        "client_id": client_key,
-        "language": requested_language,
-    }, None
-
-
-def get_client_label(client_key: str) -> str:
-    normalized_key = bot.normalize_plain_text(client_key).strip()
-    if not normalized_key:
-        return "session"
-    digest = hashlib.sha256(normalized_key.encode("utf-8")).hexdigest()
-    return digest[:12]
-
-
-def record_web_visit(user_id: int, client_key: str = "") -> None:
-    bot.refresh_auth_related_state()
-    existing = bot.web_user_profiles.get(user_id, {})
-    now = bot.now_local().isoformat()
-    meta = get_request_meta()
-    bot.web_user_profiles[user_id] = {
-        **existing,
-        "client": existing.get("client") or get_client_label(client_key),
-        "first_seen": existing.get("first_seen") or now,
-        "last_seen": now,
-        "last_ip": meta["ip"],
-        "last_user_agent": meta["user_agent"],
-        "last_origin": meta["origin"],
-        "last_referrer": meta["referrer"],
-        "visit_count": int(existing.get("visit_count") or 0) + 1,
-    }
-    bot.save_auth_related_state()
-
-
-def record_web_chat_event(
-    user_id: int,
-    client_key: str,
-    message: str,
-    requested_language: str,
-    reply: str,
-    ok: bool,
-    error: str = "",
-) -> None:
-    bot.refresh_auth_related_state()
-    existing = bot.web_user_profiles.get(user_id, {})
-    now = bot.now_local().isoformat()
-    meta = get_request_meta()
-    normalized_message = bot.normalize_plain_text(message).strip()
-    normalized_language = normalize_web_language(requested_language or get_web_language(user_id))
-    bot.web_user_profiles[user_id] = {
-        **existing,
-        "client": existing.get("client") or get_client_label(client_key),
-        "first_seen": existing.get("first_seen") or now,
-        "last_seen": now,
-        "last_ip": meta["ip"],
-        "last_user_agent": meta["user_agent"],
-        "last_origin": meta["origin"],
-        "last_referrer": meta["referrer"],
-        "last_language": normalized_language,
-        "last_request": bot.clip_text(normalized_message, 700),
-        "message_count": int(existing.get("message_count") or 0) + (1 if normalized_message else 0),
-        "visit_count": int(existing.get("visit_count") or 0),
-    }
-    bot.web_activity_log.append(
-        {
-            "id": bot.new_item_id(),
-            "user_id": user_id,
-            "client": get_client_label(client_key),
-            "message": bot.clip_text(normalized_message, 1200),
-            "reply": bot.clip_text(reply, 1200),
-            "ok": ok,
-            "error": bot.clip_text(error, 500),
-            "language": normalized_language,
-            "created_at": now,
-            **meta,
-        }
-    )
-    if len(bot.web_activity_log) > WEB_ACTIVITY_LIMIT:
-        del bot.web_activity_log[:-WEB_ACTIVITY_LIMIT]
-    bot.save_auth_related_state()
-
 
 def record_admin_session_event(action: str, ok: bool = True, reason: str = "") -> None:
     bot.refresh_auth_related_state()
@@ -452,168 +185,6 @@ def record_admin_session_event(action: str, ok: bool = True, reason: str = "") -
     if len(bot.admin_session_log) > ADMIN_SESSION_LIMIT:
         del bot.admin_session_log[:-ADMIN_SESSION_LIMIT]
     bot.save_auth_related_state()
-
-
-def get_language_system_prompt(language: str) -> str:
-    if language == "default":
-        return bot.BOT_SYSTEM_PROMPT
-    if language.lower() == "burmese":
-        return bot.BURMESE_SYSTEM_PROMPT
-    return bot.with_base_rules(
-        (
-            f"Reply in {language}. "
-            "Use natural, fluent wording a native speaker would expect. "
-            "Do not translate word-for-word. "
-            "Keep names, URLs, code, commands, and technical identifiers unchanged unless translation is requested. "
-            "If a technical English term is standard in that language, you may include it naturally."
-        )
-    )
-
-
-def get_web_system_prompt(user_id: int, text: str) -> str:
-    language = get_web_language(user_id)
-    if language.lower() == "burmese" or bot.contains_myanmar_text(text):
-        return bot.BURMESE_SYSTEM_PROMPT
-    if language != "default":
-        return get_language_system_prompt(language)
-    return bot.get_system_prompt_for_message(user_id, text)
-
-
-def get_web_max_tokens(user_id: int, text: str) -> int:
-    language = get_web_language(user_id)
-    if language.lower() == "burmese" or bot.contains_myanmar_text(text):
-        return bot.BURMESE_MAX_TOKENS
-    return bot.get_max_tokens_for_message(text)
-
-
-def run_web_transform(user_id: int, command: str, argument: str) -> str:
-    instruction_map = {
-        "/rewrite": "Rewrite this to sound better while keeping the meaning.",
-        "/summarize": "Summarize this clearly and briefly.",
-        "/shorter": "Make this shorter and tighter while keeping the main meaning.",
-        "/formal": "Rewrite this in a formal and polished tone.",
-        "/friendly": "Rewrite this in a warm, friendly, natural tone.",
-    }
-    if not argument.strip():
-        return f"Usage: {command} <text>"
-
-    return bot.transform_text(
-        user_id,
-        command,
-        argument,
-        instruction_map[command],
-        max_tokens=bot.SUMMARY_MAX_TOKENS if command == "/summarize" else bot.TRANSFORM_MAX_TOKENS,
-    )
-
-
-def run_web_command_pack(user_id: int, command: str, argument: str) -> str:
-    instruction_map = {
-        "/caption": "Write a strong social media caption.",
-        "/hook": "Write 10 strong social media hooks.",
-        "/hashtags": "Suggest relevant hashtags.",
-    }
-    if not argument.strip():
-        return f"Usage: {command} <topic or text>"
-
-    return bot.run_structured_command(
-        user_id,
-        command,
-        argument,
-        instruction_map[command],
-    )
-
-
-def process_web_chat_message(user_id: int, raw_text: str, requested_language: str = "") -> str:
-    if requested_language:
-        set_web_language(user_id, requested_language)
-
-    text = bot.normalize_plain_text(raw_text).strip()
-    if not text:
-        return "Type a command or message first."
-
-    command, argument = bot.parse_command(text)
-    command = command.lower()
-
-    if command == "/help":
-        return WEB_TERMINAL_HELP
-
-    if command == "/clear":
-        return "Screen cleared."
-
-    if command == "/reset":
-        bot.conversation_history[user_id].clear()
-        bot.conversation_summaries.pop(user_id, None)
-        bot.conversation_modes[user_id] = "chat"
-        set_web_language(user_id, "default")
-        return "Web chat memory reset."
-
-    if command == "/english":
-        set_web_language(user_id, "default")
-        return "English mode enabled."
-
-    if command in {"/burmese", "/chinese"}:
-        language = "Burmese" if command == "/burmese" else "Chinese"
-        set_web_language(user_id, language)
-        if not argument:
-            return f"{language} mode enabled. Type your message."
-        return bot.request_chat_completion(
-            user_id,
-            argument,
-            system_prompt=get_language_system_prompt(language),
-            max_tokens=bot.BURMESE_MAX_TOKENS if language == "Burmese" else bot.DEFAULT_MAX_TOKENS,
-        )
-
-    if command == "/language":
-        if not argument:
-            current_language = get_web_language(user_id)
-            return (
-                f"Current language: {current_language}\n"
-                "Use /language <name>, for example:\n"
-                "/language Burmese\n"
-                "/language Chinese\n"
-                "/language Japanese\n"
-                "/language Thai\n"
-                "/language Spanish\n"
-                "Use /language default or /english to return to normal."
-            )
-        language = set_web_language(user_id, argument)
-        if language == "default":
-            return "Default language mode enabled."
-        return f"{language} mode enabled. Future replies will use {language}."
-
-    if command == "/presentation":
-        bot.conversation_modes[user_id] = "presentation"
-        if not argument:
-            return "Usage: /presentation <topic or brief>"
-        return bot.request_chat_completion(
-            user_id,
-            argument,
-            system_prompt=bot.PRESENTATION_SYSTEM_PROMPT,
-            max_tokens=bot.PRESENTATION_MAX_TOKENS,
-        )
-
-    if command == "/link":
-        if not argument:
-            return "Usage: /link https://example.com"
-        return bot.analyze_link(user_id, argument)
-
-    if command in {"/rewrite", "/summarize", "/shorter", "/formal", "/friendly"}:
-        return run_web_transform(user_id, command, argument)
-
-    if command in {"/caption", "/hook", "/hashtags"}:
-        return run_web_command_pack(user_id, command, argument)
-
-    auto_url = bot.extract_first_url(text)
-    if auto_url and text == auto_url:
-        return bot.analyze_link(user_id, auto_url)
-
-    return bot.request_chat_completion(
-        user_id,
-        text,
-        system_prompt=get_web_system_prompt(user_id, text),
-        max_tokens=get_web_max_tokens(user_id, text),
-    )
-
 
 @app.before_request
 def enforce_login() -> Any:
@@ -670,56 +241,6 @@ def dashboard_activity_rows() -> list[dict[str, Any]]:
                 "name": str(item.get("name") or ""),
                 "account_link": str(item.get("account_link") or ""),
                 "message": str(item.get("message") or ""),
-                "created_at": bot.format_local_datetime(created_at) if created_at else "",
-            }
-        )
-    return rows
-
-
-def dashboard_web_user_rows() -> list[dict[str, Any]]:
-    bot.refresh_auth_related_state()
-    rows: list[dict[str, Any]] = []
-    sorted_profiles = sorted(
-        bot.web_user_profiles.items(),
-        key=lambda item: str(item[1].get("last_seen") or ""),
-        reverse=True,
-    )
-    for user_id, profile in sorted_profiles[:80]:
-        first_seen = str(profile.get("first_seen") or "").strip()
-        last_seen = str(profile.get("last_seen") or "").strip()
-        rows.append(
-            {
-                "user_id": user_id,
-                "client": str(profile.get("client") or "session"),
-                "first_seen": bot.format_local_datetime(first_seen) if first_seen else "",
-                "last_seen": bot.format_local_datetime(last_seen) if last_seen else "",
-                "last_ip": str(profile.get("last_ip") or ""),
-                "last_user_agent": str(profile.get("last_user_agent") or ""),
-                "last_language": str(profile.get("last_language") or ""),
-                "last_request": str(profile.get("last_request") or ""),
-                "message_count": int(profile.get("message_count") or 0),
-                "visit_count": int(profile.get("visit_count") or 0),
-            }
-        )
-    return rows
-
-
-def dashboard_web_activity_rows() -> list[dict[str, Any]]:
-    bot.refresh_auth_related_state()
-    rows: list[dict[str, Any]] = []
-    for item in reversed(bot.web_activity_log[-120:]):
-        created_at = str(item.get("created_at") or "").strip()
-        rows.append(
-            {
-                "user_id": item.get("user_id"),
-                "client": str(item.get("client") or "session"),
-                "message": str(item.get("message") or ""),
-                "reply": str(item.get("reply") or ""),
-                "ok": bool(item.get("ok", True)),
-                "error": str(item.get("error") or ""),
-                "language": str(item.get("language") or ""),
-                "ip": str(item.get("ip") or ""),
-                "user_agent": str(item.get("user_agent") or ""),
                 "created_at": bot.format_local_datetime(created_at) if created_at else "",
             }
         )
@@ -785,21 +306,17 @@ def index() -> str:
         "dashboard.html",
         users=dashboard_user_rows(),
         activity=dashboard_activity_rows(),
-        web_users=dashboard_web_user_rows(),
-        web_activity=dashboard_web_activity_rows(),
         admin_sessions=dashboard_admin_session_rows(),
         pending_count=pending_count,
         approved_count=len(bot.approved_user_ids - bot.TELEGRAM_ADMIN_USER_IDS),
         blocked_count=len(bot.blocked_user_ids),
-        web_user_count=len(bot.web_user_profiles),
     )
 
 
 @app.get("/bot")
 @app.get("/terminal")
-def web_terminal() -> str:
-    record_web_visit(get_web_user_id())
-    return render_template("terminal.html")
+def web_terminal() -> tuple[str, int]:
+    return ("Website removed.", 410)
 
 
 @app.get("/health")
@@ -809,21 +326,21 @@ def web_health() -> dict[str, str]:
 
 @app.get("/404")
 def not_found_page() -> tuple[str, int]:
-    return render_template("404.html"), 404
+    return ("Not found.", 404)
 
 
 @app.errorhandler(404)
 def handle_not_found(_: Exception) -> tuple[str, int]:
     if request.path.startswith("/api/"):
         return jsonify({"ok": False, "reply": "API route not found."}), 404
-    return render_template("404.html"), 404
+    return ("Not found.", 404)
 
 
 @app.errorhandler(405)
 def handle_method_not_allowed(_: Exception) -> tuple[Any, int]:
     if request.path.startswith("/api/"):
         return jsonify({"ok": False, "reply": "Method not allowed."}), 405
-    return render_template("404.html"), 405
+    return ("Method not allowed.", 405)
 
 
 @app.get("/admin")
@@ -836,65 +353,19 @@ def handle_method_not_allowed(_: Exception) -> tuple[Any, int]:
 @app.get("/phpmyadmin/<path:requested_path>")
 @app.get("/cpanel")
 @app.get("/cpanel/<path:requested_path>")
-def honeypot(requested_path: str = "") -> str:
+def honeypot(requested_path: str = "") -> tuple[str, int]:
     app.logger.warning(
         "Honeypot hit path=%s ip=%s ua=%s",
         request.path,
         get_request_ip(),
         request.headers.get("User-Agent", ""),
     )
-    return render_template("honeypot.html")
+    return ("Not found.", 404)
 
 
 @app.route("/api/chat", methods=["POST", "OPTIONS"])
 def web_chat() -> Any:
-    if request.method == "OPTIONS":
-        if is_cross_site_browser_request():
-            return ("", 403)
-        if not is_allowed_web_origin():
-            return ("", 403)
-        return ("", 204)
-
-    payload, error_response = parse_web_chat_payload()
-    if error_response is not None:
-        return error_response
-    assert payload is not None
-
-    message = str(payload["message"])
-    client_key = str(payload["client_id"])
-    requested_language = str(payload["language"])
-    user_id = get_web_user_id(client_key)
-
-    try:
-        answer = process_web_chat_message(user_id, message, requested_language=requested_language)
-    except requests.HTTPError as exc:
-        app.logger.exception("HTTP error while processing website chat")
-        error_body = exc.response.text[:500] if exc.response is not None else str(exc)
-        record_web_chat_event(
-            user_id,
-            client_key,
-            message,
-            requested_language,
-            f"API error:\n{error_body}",
-            ok=False,
-            error=error_body,
-        )
-        return jsonify({"ok": False, "reply": "The AI service is temporarily unavailable."}), 502
-    except Exception as exc:
-        app.logger.exception("Website chat failed")
-        record_web_chat_event(
-            user_id,
-            client_key,
-            message,
-            requested_language,
-            f"Error: {exc}",
-            ok=False,
-            error=str(exc),
-        )
-        return jsonify({"ok": False, "reply": "The chat service failed. Try again later."}), 500
-
-    record_web_chat_event(user_id, client_key, message, requested_language, answer, ok=True)
-    return jsonify({"ok": True, "reply": answer})
+    return jsonify({"ok": False, "reply": "Website chat has been removed."}), 410
 
 
 @app.post("/hash")

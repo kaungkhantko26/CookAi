@@ -260,10 +260,6 @@
           <div>Recent events</div>
           <strong>{{ activity|length }}</strong>
         </div>
-        <div class="stat">
-          <div>Website visitors</div>
-          <strong>{{ web_user_count }}</strong>
-        </div>
       </div>
 
       <div class="grid">
@@ -331,65 +327,6 @@
                 <small> · {{ item.created_at }}</small><br>
                 <small>ID {{ item.user_id }} · <span class="status {{ item.status }}">{{ item.status }}</span> · <a href="{{ item.account_link }}" target="_blank" rel="noreferrer">account</a></small>
                 <p>{{ item.message }}</p>
-              </article>
-            {% endfor %}
-          </div>
-        </section>
-      </div>
-
-      <div class="grid" style="margin-top: 18px;">
-        <section class="card">
-          <h2>Website Visitors</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>Visitor</th>
-                <th>Counts</th>
-                <th>Last seen</th>
-                <th>Last request</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for user in web_users %}
-                <tr>
-                  <td>
-                    <strong>Web user {{ user.client }}</strong><br>
-                    <small>ID {{ user.user_id }}</small><br>
-                    <small>IP {{ user.last_ip or "-" }}</small><br>
-                    <small>{{ user.last_user_agent or "-" }}</small>
-                  </td>
-                  <td>
-                    {{ user.message_count }} messages<br>
-                    <small>{{ user.visit_count }} visits</small><br>
-                    <small>{{ user.last_language or "default" }}</small>
-                  </td>
-                  <td>
-                    {{ user.last_seen or "-" }}<br>
-                    <small>First {{ user.first_seen or "-" }}</small>
-                  </td>
-                  <td>{{ user.last_request or "-" }}</td>
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </section>
-
-        <section class="card">
-          <h2>Website Questions</h2>
-          <div class="activity-list">
-            {% for item in web_activity %}
-              <article class="activity">
-                <strong>Web user {{ item.client }}</strong>
-                <small> · {{ item.created_at }} · IP {{ item.ip or "-" }}</small><br>
-                <small>ID {{ item.user_id }} · {{ item.language or "default" }} · <span class="status {{ 'success' if item.ok else 'failed' }}">{{ "ok" if item.ok else "failed" }}</span></small>
-                <p>{{ item.message or "-" }}</p>
-                {% if item.reply %}
-                  <p class="reply-text">Reply: {{ item.reply }}</p>
-                {% endif %}
-                {% if item.error %}
-                  <p class="reply-text">Error: {{ item.error }}</p>
-                {% endif %}
-                <small>{{ item.user_agent or "-" }}</small>
               </article>
             {% endfor %}
           </div>
